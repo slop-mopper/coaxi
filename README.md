@@ -42,9 +42,138 @@ Explicit names are used unchanged. Use `t_prefix=False` for generated names
 such as `samples_valid`. Last is absent unless explicitly selected with
 `last=True`, a name or a handle. This initial subset requires ready.
 
-Payload access is separate from handshake logic. The default payload adapter
-retains cocotb logic values and represents VHDL records as field mappings.
-Applications can supply a `Payload[T]` adapter for their own types.
+## Sending and receiving
+
+Start the clock before awaiting either endpoint's initial `reset()`. The following
+bounded cocotb test uses an otherwise undriven, unframed stream in the example DUT:
+
+```python
+import cocotb
+from cocotb.clock import Clock
+from cocotb.types import LogicArray
+from cocotb.handle import HierarchyObject
+
+from coaxi import AxiStreamBus, AxiStreamSink, AxiStreamSource, to_unsigned
+
+
+@cocotb.test(timeout_time=2000, timeout_unit="ns")
+async def loopback(dut: HierarchyObject) -> None:
+	cocotb.start_soon(Clock(dut.beat_clock, 10, unit="ns").start(start_high=False))
+	bus = AxiStreamBus.bind(dut, prefix="plain", t_prefix=False)
+	source = AxiStreamSource(bus, clock="beat_clock")
+	sink = AxiStreamSink(bus, clock="beat_clock")
+	await source.reset()
+	await sink.reset()
+
+	sending = cocotb.start_soon(source.send(42))
+	transfer = await sink.recv()
+	await sending
+	assert isinstance(transfer.data, LogicArray)
+	assert to_unsigned(transfer.data) == 42
+	assert transfer.last is None
+```
+
+Only start a cocotb clock when the testbench owns it. In a DUT testbench, bind
+the source to a DUT input stream and the sink to a DUT output stream instead of
+the same bus, and coordinate initialisation with the DUT's reset.
+
+[The runnable example](examples/stream_loopback.py) includes this loopback and
+framed IQ-record transfers. It runs against
+[the VHDL-2008 fixture](tests/hdl/stream_dut.vhd) in both write modes when running
+`uv run pytest -q tests/test_simulation.py -k example`.
+
+`send(data, last=...)` holds data and last stable until ready is sampled high.
+`recv()` asserts ready while waiting for valid and returns an
+`AxiStreamTransfer` with `data` and `last`. Values are sampled at rising edges,
+before clocked HDL updates. Both calls return after clearing their handshake
+output at the following falling edge, rather than at the accepting
+rising edge. The source owns data, valid and last; the sink owns ready.
+
+Each endpoint allows one active operation. There are no background queues.
+Start send/receive concurrently when the peer needs both operations to progress;
+awaiting send before starting a same-bus receive would stall. Calls may introduce
+idle cycles, and full-rate throughput is not promised. Each operation needs a
+running clock and a cooperating peer; use a bounded cocotb test or a
+simulation-time timeout to detect stalled traffic.
+
+## Framing and payloads
+
+Unframed transfers omit last and return `transfer.last is None`. When last is
+bound, **every** send must explicitly supply `last=False` or `last=True`. Last
+is captured on each accepted transfer; there is no implicit frame assembly:
+
+```python
+await source.send(first_sample, last=False)
+await source.send(final_sample, last=True)
+```
+
+Here the peer must already be receiving. These are individual transfers on a
+framed bus, not a higher-level frame API.
+
+Payload access is separate from handshake logic. The default `HandlePayload`
+adapter accepts scalar logic, vectors and named containers such as VHDL records.
+Reads retain cocotb `Logic`/`LogicArray` values and use field mappings for records.
+For example, an IQ record with two signed 16-bit fields can be sent directly:
+
+```python
+from cocotb.types import LogicArray
+
+await source.send(
+	{"i": LogicArray.from_signed(-12, 16), "q": LogicArray.from_signed(34, 16)},
+	last=True,
+)
+```
+
+Integer inputs are unsigned and must fit the leaf width. Field mappings must
+match all record fields exactly. Negative numbers need an explicitly signed
+`LogicArray`, as above. Default payload validation checks the entire value before
+writing any leaf. Unsupported handle types require a custom adapter.
+
+`to_unsigned()` and `to_signed()` explicitly convert vector snapshots. They
+reject unresolved X/U/Z/etc. even if cocotb is configured to resolve them;
+weak L/H bits remain resolvable. Payload X/U/etc. are otherwise retained.
+Driving meta-values is supported for deliberate propagation or fault-injection
+tests; ordinary reset clears them to zero. Sampled valid, ready and accepted
+last must be exactly 0 or 1, including rejection of weak L/H control values.
+
+Applications can supply a `Payload[T]` adapter using `payload=...` on an endpoint
+to work with a custom value type. Its synchronous `drive`, `read` and `clear`
+methods must not yield. `read` must return an independent snapshot, and `clear`
+must define every owned leaf. A custom source adapter can partially write before
+raising; recovery does not roll those writes back. The sink never calls the
+payload's `clear`, since it does not own incoming data. Do not mutate a value
+passed to `send` until that call finishes.
+
+## Reset, errors and cancellation
+
+Always await `reset()` initially and after a failed or cancelled transfer.
+Source reset clears valid, last and all owned payload leaves; sink reset clears
+ready. Outputs clear at a falling edge, so reset also needs a running clock.
+A failed or cancelled reset leaves the endpoint unusable until reset succeeds.
+Reset is explicit local recovery; there is no automatic reset-pin monitoring.
+
+Local reset invalidates pending operations with `TransferReset`. When reset
+may interrupt a spawned operation, catch this exception **inside that coroutine**;
+cocotb can fail a test on an unobserved task exception before a later await
+observes it. Concurrent transfers on one endpoint, overlapping reset calls, and
+transfers started while reset is active raise `EndpointStateError`. Reset may
+interrupt an active transfer. Invalid sampled controls raise `ProtocolValueError`,
+and invalid bindings raise
+`SignalBindingError`.
+
+Neither cancellation nor local reset can undo a transfer already accepted at a
+rising edge. Interruption can occur after acceptance but before cleanup returns,
+so **do not blindly retry an interrupted transfer**: it could duplicate data.
+Cancellation leaves driven outputs for explicit reset recovery. Coordinate
+recovery with DUT reset during active traffic; local reset does not reset the
+DUT or discard its buffered transfers.
+
+## Current scope
+
+The implemented subset requires ready and optionally supports last. Other
+AXI-Stream sidebands, frame helpers and automatic reset monitoring are not yet
+implemented. The timing model targets event-driven simulators and is tested
+with `nvc`; no support for other simulator timing models is claimed.
 
 ## Development
 

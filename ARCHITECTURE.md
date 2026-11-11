@@ -70,14 +70,21 @@ a caller's name.
 - `tests/test_typing.py` checks default/custom constructor inference and
   rejection of specialised endpoints without adapters using default Pyrefly.
 - `tests/stream_cases.py` contains cocotb cases for binding, vector/record
-  payloads, framing, timing, backpressure, reset and cancellation.
+  payloads, framing, timing, backpressure, reset and cancellation. Recovery
+  cases include interruption between acceptance and cleanup, cancellation of
+  reset, and injected adapter drive/read/clear failures. DUT counters verify
+  that interruption does not undo a previously accepted transfer.
 - `tests/hdl/stream_dut.vhd` is the VHDL-2008 DUT, including a registered stream
   path and a two-field signed IQ record.
-- `tests/test_simulation.py` runs the cocotb cases with `nvc` in both inertial
-  write modes. `uv run pytest -q` runs the Python and simulator tests.
+- `examples/stream_loopback.py` is a bounded cocotb usage example for unframed
+  vectors and framed signed IQ records on the fixture's undriven buses.
+- `tests/test_simulation.py` runs the cocotb regression and usage example with
+  `nvc` in both inertial write modes. `uv run pytest -q` runs the Python and
+  simulator tests.
 
 `pyproject.toml` declares metadata, build configuration, runtime dependencies,
-development tools and Ruff settings. `uv.lock` records resolved dependencies.
+development tools and Ruff settings. The distribution's long description uses
+`README.md`. `uv.lock` records resolved dependencies.
 Use `uv sync --locked` to create the project-local `.venv`; `.python-version`
 selects Python 3.13. cocotb 2.1.0 or later is a runtime dependency.
 

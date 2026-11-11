@@ -387,3 +387,246 @@ async def payload_validation(dut: HierarchyObject) -> None:
 		with pytest.raises((ValueError, TypeError)):
 			vector.drive(invalid_vector)
 	assert isinstance(dut.plain_data, LogicArrayObject)
+
+
+async def _reset_registered_path(dut: HierarchyObject) -> None:
+	await FallingEdge(dut.beat_clock)
+	dut.wipe_registers.value = 1
+	dut.allow_input.value = 1
+	await RisingEdge(dut.beat_clock)
+	await FallingEdge(dut.beat_clock)
+	dut.wipe_registers.value = 0
+
+
+@cocotb.test(timeout_time=10000, timeout_unit="ns")
+async def interruptions_after_acceptance(dut: HierarchyObject) -> None:
+	"""Preserve wire acceptance when reset/cancellation interrupts cleanup."""
+	await _setup(dut)
+	source_bus = AxiStreamBus.bind(dut, prefix="s", last=True)
+	sink_bus = AxiStreamBus.bind(dut, prefix="m", t_prefix=False, last=True)
+	source, sink = AxiStreamSource(source_bus, "beat_clock"), AxiStreamSink(sink_bus, "beat_clock")
+	for target in ("source", "sink"):
+		for interruption in ("cancel", "reset"):
+			await source.reset()
+			await sink.reset()
+			await _reset_registered_path(dut)
+			value = 0x1234
+			if target == "source":
+				pending = cocotb.start_soon(_capture(source.send(value, last=True)))
+			else:
+				# Fill the registered DUT while the sink keeps ready low.
+				await source.send(value, last=True)
+				pending = cocotb.start_soon(_capture(sink.recv()))
+			await Timer(1, unit="ns")
+			await FallingEdge(dut.beat_clock)
+			await RisingEdge(dut.beat_clock)
+			await Timer(1, unit="ns")  # Accepted, but falling-edge cleanup is pending.
+			assert not pending.done()
+			assert int(dut.accepted.value) == 1
+			assert int(dut.retired.value) == (1 if target == "sink" else 0)
+			endpoint = source if target == "source" else sink
+			if interruption == "cancel":
+				pending.cancel()
+				with pytest.raises(CancelledError):
+					await pending
+				with pytest.raises(EndpointStateError):
+					if target == "source":
+						await source.send(0, last=False)
+					else:
+						await sink.recv()
+				await endpoint.reset()
+			else:
+				await endpoint.reset()
+				assert isinstance(await pending, TransferReset)
+			await ReadOnly()
+			assert int(dut.accepted.value) == 1  # Recovery cannot undo acceptance.
+			assert int(dut.retired.value) == (1 if target == "sink" else 0)
+			if target == "source":
+				assert str(source_bus.valid.value) == "0"
+				assert str(source_bus.last.value) == "0"
+				assert int(source_bus.data.value) == 0
+				buffered = await sink.recv()
+				assert to_unsigned(_array(buffered.data)) == value
+				assert buffered.last is True
+				await ReadOnly()
+				assert int(dut.accepted.value) == 1
+				assert int(dut.retired.value) == 1
+			else:
+				assert str(sink_bus.ready.value) == "0"
+			# Coordinate local recovery with DUT reset, then send a distinct value.
+			await source.reset()
+			await sink.reset()
+			await _reset_registered_path(dut)
+			sending = cocotb.start_soon(source.send(0x5678, last=False))
+			result = await sink.recv()
+			await sending
+			assert to_unsigned(_array(result.data)) == 0x5678
+			assert result.last is False
+			await ReadOnly()
+			assert int(dut.accepted.value) == 1
+			assert int(dut.retired.value) == 1
+
+
+@cocotb.test(timeout_time=10000, timeout_unit="ns")
+async def cancelled_resets(dut: HierarchyObject) -> None:
+	"""A cancelled clearing edge leaves reset required and permits recovery."""
+	await _setup(dut)
+	bus = _record(dut)
+	source, sink = AxiStreamSource(bus, "beat_clock"), AxiStreamSink(bus, "beat_clock")
+	await source.reset()
+	await sink.reset()
+	for target, cancel_transfer in (("source", True), ("sink", True), ("source", False), ("sink", False)):
+		if target == "source":
+			pending = cocotb.start_soon(_capture(source.send({"i": "X" * 16, "q": "U" * 16}, last=True)))
+		else:
+			pending = cocotb.start_soon(_capture(sink.recv()))
+		await Timer(1, unit="ns")
+		await FallingEdge(dut.beat_clock)
+		await Timer(1, unit="ns")
+		if cancel_transfer:
+			pending.cancel()
+			with pytest.raises(CancelledError):
+				await pending
+		endpoint = source if target == "source" else sink
+		resetting = cocotb.start_soon(endpoint.reset())
+		await Timer(1, unit="ns")  # Cancel before the next falling edge can clear outputs.
+		resetting.cancel()
+		with pytest.raises(CancelledError):
+			await resetting
+		if not cancel_transfer:
+			assert isinstance(await pending, TransferReset)
+		with pytest.raises(EndpointStateError):
+			if target == "source":
+				await source.send({"i": 0, "q": 0}, last=False)
+			else:
+				await sink.recv()
+		if target == "source":
+			assert str(bus.valid.value) == "1"
+			assert str(bus.last.value) == "1"
+			assert str(dut.iq_word_in["i"].value) == "X" * 16
+			assert str(dut.iq_word_in["q"].value) == "U" * 16
+		else:
+			assert str(bus.ready.value) == "1"
+		await endpoint.reset()
+		await ReadOnly()
+		if target == "source":
+			assert str(bus.valid.value) == "0"
+			assert str(bus.last.value) == "0"
+			assert int(dut.iq_word_in["i"].value) == 0
+			assert int(dut.iq_word_in["q"].value) == 0
+		else:
+			assert str(bus.ready.value) == "0"
+	sending = cocotb.start_soon(source.send({"i": 7, "q": 8}, last=True))
+	result = await sink.recv()
+	await sending
+	assert isinstance(result.data, Mapping)
+	assert to_unsigned(_array(result.data["i"])) == 7
+	assert to_unsigned(_array(result.data["q"])) == 8
+	assert result.last is True
+
+
+class _FaultPayload:
+	def __init__(self, handle: LogicArrayObject) -> None:
+		self._raw = HandlePayload(handle)
+		self.failure: str | None = None
+
+	def read(self) -> PayloadValue:
+		"""Raise on demand before reading an accepted payload."""
+		if self.failure == "read":
+			raise RuntimeError("injected read failure")
+		return self._raw.read()
+
+	def drive(self, value: PayloadValue) -> None:
+		"""Raise on demand after writing, to model a partially failed adapter."""
+		self._raw.drive(value)
+		if self.failure == "drive":
+			raise RuntimeError("injected drive failure")
+
+	def clear(self) -> None:
+		"""Raise on demand before clearing, leaving previous data on the wire."""
+		if self.failure == "clear":
+			raise RuntimeError("injected clear failure")
+		self._raw.clear()
+
+
+@cocotb.test(timeout_time=10000, timeout_unit="ns")
+async def healthy_reset_failures(dut: HierarchyObject) -> None:
+	"""An unsuccessful reset invalidates even a previously healthy endpoint."""
+	await _setup(dut)
+	bus = _plain(dut)
+	payload = _FaultPayload(dut.plain_data)
+	source = AxiStreamSource(bus, "beat_clock", payload=payload)
+	sink = AxiStreamSink(bus, "beat_clock")
+	await source.reset()
+	await sink.reset()
+	for target in ("source", "sink"):
+		endpoint = source if target == "source" else sink
+		resetting = cocotb.start_soon(endpoint.reset())
+		await Timer(1, unit="ns")  # Healthy and idle; reset has begun but cannot finish.
+		resetting.cancel()
+		with pytest.raises(CancelledError):
+			await resetting
+		with pytest.raises(EndpointStateError):
+			if target == "source":
+				await source.send(1)
+			else:
+				await sink.recv()
+		await endpoint.reset()
+	payload.failure = "clear"
+	with pytest.raises(RuntimeError, match="injected clear"):
+		await source.reset()
+	with pytest.raises(EndpointStateError):
+		await source.send(2)
+	payload.failure = None
+	await source.reset()
+	sending = cocotb.start_soon(source.send(3))
+	assert to_unsigned(_array((await sink.recv()).data)) == 3
+	await sending
+
+
+@cocotb.test(timeout_time=10000, timeout_unit="ns")
+async def adapter_failures(dut: HierarchyObject) -> None:
+	"""Propagate adapter failures and require recovery without claiming rollback."""
+	await _setup(dut)
+	bus = _plain(dut)
+	source_payload = _FaultPayload(dut.plain_data)
+	sink_payload = _FaultPayload(dut.plain_data)
+	source = AxiStreamSource(bus, "beat_clock", payload=source_payload)
+	sink = AxiStreamSink(bus, "beat_clock", payload=sink_payload)
+	await source.reset()
+	await sink.reset()
+	source_payload.failure = "drive"
+	with pytest.raises(RuntimeError, match="injected drive"):
+		await source.send("XU000001")
+	with pytest.raises(EndpointStateError):
+		await source.send(0)
+	source_payload.failure = "clear"
+	with pytest.raises(RuntimeError, match="injected clear"):
+		await source.reset()
+	with pytest.raises(EndpointStateError):
+		await source.send(0)
+	await ReadOnly()
+	assert str(dut.plain_data.value) == "XU000001"
+	assert str(bus.valid.value) == "0"
+	source_payload.failure = None
+	await source.reset()
+	await ReadOnly()
+	assert int(dut.plain_data.value) == 0
+
+	sink_payload.failure = "read"
+	sending = cocotb.start_soon(source.send(21))
+	with pytest.raises(RuntimeError, match="injected read"):
+		await sink.recv()
+	await sending
+	with pytest.raises(EndpointStateError):
+		await sink.recv()
+	# The sink owns only ready: reset must not invoke the payload clear hook.
+	sink_payload.failure = "clear"
+	await sink.reset()
+	await ReadOnly()
+	assert str(bus.ready.value) == "0"
+	assert int(dut.plain_data.value) == 21
+	sink_payload.failure = None
+	sending = cocotb.start_soon(source.send(88))
+	assert to_unsigned(_array((await sink.recv()).data)) == 88
+	await sending
