@@ -1,11 +1,14 @@
 # AGENTS.md
 # SPDX-License-Identifier: CC0-1.0
-# This file was created by an AI model: openai/CLIProxyAPI/gpt-6.1-sol
+# This file was created by an AI model: openai/gpt-6.1-sol
 
 ## Project purpose
 
-This project is a ground-up rewrite of `cocotbext-axi`. It provides helpers for
+`coaxi` is a ground-up rewrite of `cocotbext-axi`. It provides helpers for
 interacting with AXI4, AXI4-Lite, and AXI-Stream interfaces in cocotb testbenches.
+The project and distribution name is `coaxi`; the Python package is `coaxi`,
+located at `src/coaxi`. Use imports such as `from coaxi import AxiStreamBus`.
+Do not use the former `cocotbext.axi` namespace or add a compatibility package.
 
 The first implementation should make AXI-Stream work well, with a small, clear
 foundation that can later support AXI4 and AXI4-Lite. Do not implement the other
@@ -115,12 +118,13 @@ The project licence is CC0-1.0. Start every new first-party source file with:
 ```python
 # <FILENAME>
 # SPDX-License-Identifier: CC0-1.0
-# This file was created by an AI model: <EXACT-MODEL-ID>
+# This file was created by an AI model: openai/<MODEL-NAME>
 ```
 
 Replace `<FILENAME>` with the file's basename, without any directory components.
-Replace `<EXACT-MODEL-ID>` with the exact identifier of the model creating the
-file, rather than a generic assistant name. Do not invent an identifier.
+Replace `<MODEL-NAME>` with the exact name of the model creating the file, such
+as `gpt-6.1-sol`. Use `openai/<MODEL-NAME>`, omitting routing or proxy components.
+Do not use a generic assistant name or invent a model name.
 Use the language's comment syntax where `#` is unsuitable, such as `--` for
 VHDL, while retaining the same header text.
 

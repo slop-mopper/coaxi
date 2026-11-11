@@ -1,9 +1,16 @@
 # pyproject.toml
 # SPDX-License-Identifier: CC0-1.0
-# This file was created by an AI model: openai/CLIProxyAPI/gpt-6.1-sol
+# This file was created by an AI model: openai/gpt-6.1-sol
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/coaxi"]
 
 [project]
-name = "cocotbext-axi-redux"
+name = "coaxi"
 version = "0.1.0"
 description = "AXI interface helpers for cocotb testbenches."
 requires-python = ">=3.13"
@@ -14,9 +21,13 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+	"pytest",
 	"pyrefly",
 	"ruff",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 120

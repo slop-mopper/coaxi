@@ -3,6 +3,31 @@ revision = 5
 requires-python = ">=3.13"
 
 [[package]]
+name = "coaxi"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "cocotb" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pyrefly" },
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "cocotb", specifier = ">=2.1.0" }]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pyrefly" },
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
+[[package]]
 name = "cocotb"
 version = "2.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -24,29 +49,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/e7/9c/cd68994a36705d5a087bde37c8607bedee7a825746ffcda967ab9f04d96e/cocotb-2.1.0-cp314-cp314t-macosx_11_0_arm64.whl", hash = "sha256:157fff028a3aa0999451ff54b23a14ffabb4a00d1a23adbf17c3057b6fc2a10f", size = 689071, upload-time = "2026-08-30T19:02:06.711Z" },
     { url = "https://files.pythonhosted.org/packages/75/82/ff6cd4b24ed7401120c78a6e0fa60f91741e8fe94e2ca6f0507f355c7f90/cocotb-2.1.0-cp314-cp314t-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:b4614edd8292826943c605cf71966c718f5b90ea2a4a2a16d1087a2cd05db416", size = 4850591, upload-time = "2026-08-30T19:02:08.117Z" },
     { url = "https://files.pythonhosted.org/packages/7a/5c/a6c8f68e41b75722570ad1873ecec16f1379ac6c64f7538d21d72b339620/cocotb-2.1.0-cp314-cp314t-win_amd64.whl", hash = "sha256:f670e959a72cb362013c9f2dc581f3737c99bbe5822d54185a0c10354fca16ee", size = 670883, upload-time = "2026-08-30T19:02:09.888Z" },
-]
-
-[[package]]
-name = "cocotbext-axi-redux"
-version = "0.1.0"
-source = { virtual = "." }
-dependencies = [
-    { name = "cocotb" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pyrefly" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "cocotb", specifier = ">=2.1.0" }]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pyrefly" },
-    { name = "ruff" },
 ]
 
 [[package]]
