@@ -17,6 +17,16 @@ protocols ahead of that goal or build abstractions solely for hypothetical needs
 Do not depend on `cocotb-bus` or `cocotbext-bus`. Keep signal binding simple and
 within this library.
 
+## Decisions and clarification
+
+Never assume the answer to an ambiguous project architecture choice or other
+decision. If a decision is unclear, or it would otherwise be useful to consult
+the user, always ask the user what to do and wait for their answer before
+proceeding with that decision.
+
+Explain the uncertainty briefly and, where useful, give the available options
+and their trade-offs. Do not invent requirements or silently settle the choice.
+
 ## Interface requirements
 
 ### Signal names
