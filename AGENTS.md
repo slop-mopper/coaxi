@@ -90,6 +90,8 @@ messages at higher log levels.
   limitation rather than working around those restrictions.
 - Use modern Python practices and keep the design straightforward.
 - Use cocotb 2.1.0 or later. Keep it as a runtime dependency in `pyproject.toml`.
+- Keep `uv.lock` consistent with changes to declared dependencies. Avoid
+  unrelated dependency upgrades.
 - Use Pyrefly for type checking with its default configuration. Do not add
   Pyrefly overrides unless requested.
 - Use Ruff for formatting and linting. Follow the settings in `pyproject.toml`:
@@ -97,6 +99,8 @@ messages at higher log levels.
   formatting, and the supplied lint and import-sorting rules.
 - Run `uv run pyrefly check`, `uv run ruff format --check .`, and
   `uv run ruff check .`. Apply formatting with `uv run ruff format .`.
+- Run `uv run pytest -q` for the Python and simulator tests. Add a regression
+  test for each bug fix where practical.
 
 ## Public APIs and documentation
 
@@ -147,6 +151,9 @@ VHDL, while retaining the same header text.
   is implemented.
 - Test framed and unframed transfers, custom data types, meta-values, reset
   behaviour, and backpressure as the relevant features are implemented.
+- Give simulation tests bounded simulation-time timeouts so stalled transfers
+  fail instead of hanging indefinitely.
+- Record the seeds used by randomised tests so failures can be reproduced.
 
 ## Architecture and commits
 
@@ -156,6 +163,8 @@ VHDL, while retaining the same header text.
 - Before every commit, review the code changes against `ARCHITECTURE.md`.
   Update it whenever needed so that all architectural effects of those changes
   are reflected. Do not describe planned features as already implemented.
+- Do not overwrite or revert unrelated changes, discard uncommitted work, or
+  rewrite Git history without the user's explicit permission.
 - Commit work in self-contained, appropriately sized chunks. Keep unrelated
   changes separate and use succinct, readable commit messages.
 - Run the relevant tests, type checks, and formatting checks before committing.
