@@ -101,6 +101,12 @@ a caller's name.
 ## Tests and development
 
 - `tests/test_values.py` covers explicit numeric conversion.
+- `tests/test_distribution.py` builds the sdist and a wheel from that sdist using
+  `uv build`, checks metadata, the CC0 licence and package contents, then installs
+  the wheel without dependencies into a temporary target directory. A fresh
+  interpreter imports all public exports and exercises conversions/frame
+  signatures from that installation. The check uses the current `.venv`
+  dependencies; it does not claim validation in a minimal consumer environment.
 - `tests/test_typing.py` checks default/custom constructor inference and
   rejection of specialised endpoints without adapters, and generic frame method
   input/result types using default Pyrefly.
@@ -121,8 +127,13 @@ a caller's name.
   optional-limit boundaries, preflight validation and incomplete-frame recovery.
   Interruptions cover intermediate/final acceptance before cleanup, stale tasks
   after reset, adapter/control failures and sequence access failures.
+- `tests/handle_cases.py` exercises scalar payloads with one-bit vector controls
+  and a one-bit vector clock, using both ascending and descending non-zero
+  indices. It checks full-rate frames, independent scalar snapshots, deliberate
+  payload meta-values, scalar validation, backpressure, control faults and reset
+  ownership.
 - `tests/hdl/stream_dut.vhd` is the VHDL-2008 DUT, including a registered stream
-  path and a two-field signed IQ record.
+  path, a two-field signed IQ record and undriven scalar/vector-control signals.
 - `examples/stream_loopback.py` is a bounded cocotb usage example for unframed
   vectors and signed IQ-record frame helpers on the fixture's undriven buses.
 - `tests/test_simulation.py` runs the cocotb regression and usage example with
@@ -131,7 +142,9 @@ a caller's name.
 
 `pyproject.toml` declares metadata, build configuration, runtime dependencies,
 development tools and Ruff settings. The distribution's long description uses
-`README.md`. `uv.lock` records resolved dependencies.
+`README.md`. `LICENSE.txt` contains the unmodified CC0 legal code and is explicitly
+included in distribution metadata and both archives. `uv.lock` records resolved
+dependencies.
 Use `uv sync --locked` to create the project-local `.venv`; `.python-version`
 selects Python 3.13. cocotb 2.1.0 or later is a runtime dependency.
 

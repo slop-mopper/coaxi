@@ -32,6 +32,12 @@ architecture test of stream_dut is
 	signal sample_available, consumer_accepts, end_of_packet : std_logic := '0';
 	signal \lane.payload[0]\ : std_logic_vector(7 downto 0) := (others => '0');
 	signal \offer-now!\, \take-it?\ : std_logic := '0';
+
+	signal scalar_value : std_logic := '0';
+	signal single_clock : std_logic_vector(7 downto 7) := "0";
+	signal single_valid : std_logic_vector(2 to 2) := "0";
+	signal single_ready : std_logic_vector(4 downto 4) := "0";
+	signal single_last : std_logic_vector(9 to 9) := "0";
 begin
 	s_tready <= allow_input and (not occupied or m_ready);
 	m_valid <= occupied;

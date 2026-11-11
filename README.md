@@ -15,6 +15,31 @@ The distribution and Python import name are both `coaxi`:
 from coaxi import AxiStreamBus, AxiStreamSource, AxiStreamSink
 ```
 
+## Installation
+
+Use Python 3.13 or later and cocotb 2.1.0 or later. cocotb is installed as a
+runtime dependency. These commands use a local checkout and do not assume a
+package-index release:
+
+```text
+# In this library's checkout:
+uv sync --locked
+uv build
+
+# In a separate Python 3.13+ testbench project managed by uv:
+uv add /absolute/path/to/coaxi/dist/coaxi-0.1.0-py3-none-any.whl
+```
+
+Run testbench tools through that project's `uv run`. To use the source checkout
+instead, run `uv add /absolute/path/to/coaxi` in the testbench project.
+The Python package is pure Python, but running a testbench also requires a
+simulator and cocotb's simulator integration. The regression has been run with
+Python 3.13.5, cocotb 2.1.0 and `nvc` 1.21.1 on Linux; other simulator timing
+models are not covered by these results.
+
+The examples, test fixture and architecture links below refer to files in the
+source checkout or unpacked source distribution.
+
 ## Signal names
 
 Defaults are optional conveniences. Every signal can be overridden independently
@@ -275,6 +300,24 @@ uv run ruff format --check .
 uv run ruff check .
 ```
 
-Simulation uses `nvc` and VHDL-2008. See [ARCHITECTURE.md](ARCHITECTURE.md) for the
-components, timing model and current limitations, and [AGENTS.md](AGENTS.md) for
-the development rules.
+Simulation uses `nvc` and VHDL-2008. The handle regressions include scalar
+payloads and one-bit vector controls/clocks as well as ordinary vector and
+record payloads. Both cocotb inertial-write modes are tested.
+
+`uv run pytest -q tests/test_distribution.py` builds a source distribution and a
+wheel from it in a temporary directory. It checks metadata, licence inclusion,
+the public exports and type marker, installs the wheel without dependencies into
+a temporary directory, then imports/exercises that installed package in a fresh
+interpreter. This smoke check uses dependencies from the current project-local
+`.venv`; it does not validate a minimal consumer environment.
+Build isolation may need to download the declared build backend when uncached.
+It performs no publication or upload.
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the components, timing model and
+current limitations, and [AGENTS.md](AGENTS.md) for the development rules.
+
+## Licence
+
+coaxi uses CC0-1.0. [LICENSE.txt](LICENSE.txt) contains the unmodified
+[CC0 1.0 Universal legal code](https://creativecommons.org/publicdomain/zero/1.0/legalcode.txt),
+included in both source and wheel distributions.
