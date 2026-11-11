@@ -65,8 +65,10 @@ source = AxiStreamSource(bus, clock="beat_clock")
 
 Explicit names are used unchanged. Use `t_prefix=False` for generated names
 such as `samples_valid`. Last and the other sidebands are absent unless
-explicitly selected with `True`, a name or a handle. This subset still requires
-data and ready. No sidebands need to be selected for bare-bones usage.
+explicitly selected with `True`, a name or a handle. Data and ready use their
+generated names by default; select `data=False` or `ready=False` to omit either.
+`None` retains the generated name. Direct bus construction uses `None` for an
+absent handle. No sidebands need to be selected for bare-bones usage.
 
 ## Sending and receiving
 
@@ -121,11 +123,65 @@ before clocked HDL updates. Both calls schedule handshake cleanup and return at
 the following falling edge, rather than at the accepting rising edge. The source
 owns data, valid, last and all bound sidebands; the sink owns ready.
 
-Each endpoint allows one active operation. There are no background queues.
+Each endpoint allows one active operation. With ready present, there are no
+background queues or capture tasks; the sink accepts only during a receive.
 Start send/receive concurrently when the peer needs both operations to progress;
 awaiting send before starting a same-bus receive would stall. Each operation needs
-a running clock and a cooperating peer; use a bounded cocotb test or a
-simulation-time timeout to detect stalled traffic.
+a running clock for live traffic and a cooperating peer; buffered no-ready
+receives can return immediately. Use a bounded cocotb test or a simulation-time
+timeout to detect stalled traffic.
+
+### Data-less streams and reception without ready
+
+Without data, send an explicit `None`, or a non-empty sequence of `None` values
+for a frame. The received `data` is `None`. Sidebands remain independent:
+
+```python
+bus = AxiStreamBus.bind(dut, prefix="events", data=False, ready=False, last=True)
+source = AxiStreamSource(bus, clock="beat_clock")
+sink = AxiStreamSink(bus, clock="beat_clock")
+await source.reset()
+await sink.reset()
+try:
+	await source.send_frame([None, None])  # No receiver call is needed to accept.
+	frame = await sink.recv_frame()
+	assert all(transfer.data is None for transfer in frame)
+finally:
+	await sink.close()
+```
+
+Without ready, every valid rising edge accepts a transfer. Successful initial
+`sink.reset()` starts a background collector; it continues while Python is idle.
+It snapshots the payload and sidebands before clocked HDL updates and makes the
+snapshot available at the following falling edge. A waiting receive therefore
+retains the existing falling-edge completion timing. Already-buffered transfers
+return immediately, so several dequeues or complete buffered packets can return
+in one simulation step. Raw receives keep wire order; packets keep `(id, dest)`
+assembly and completion order. The source never waits for a receiver call.
+
+Use `await sink.close()` when capture is no longer needed. It stops capture,
+invalidates pending receives with `TransferReset` and discards all retained
+traffic. Closing a no-ready sink needs no clock edge; closing a ready-backed
+sink clears ready at a falling edge. Repeated closes are safe. A subsequent
+`reset()` restarts the sink. Reset/close must not overlap. Catch `TransferReset`
+inside any spawned receive that shutdown can interrupt. Traffic accepted before
+initial reset or while capture is stopped cannot be recovered.
+
+No-ready buffering is unlimited by default. An optional positive
+`buffer_capacity` on `AxiStreamSink(...)` counts **all retained, undelivered
+transfers**, including incomplete packets and snapshots awaiting delivery.
+Moving a transfer into packet assembly does not free capacity; returning or
+explicitly discarding it does. A finite capacity is rejected on a bus with ready.
+Overflow raises `OverflowError`; it cannot prevent physical acceptance.
+
+Overflow or a payload/control/qualifier capture error stops the collector.
+The current or next receive raises the original exception **before returning
+older buffered data**, without an unobserved background task exception.
+Further receives keep reporting that fault until local recovery. Reset discards
+the queue, partial packets and fault, and restarts capture. Close also discards
+them but leaves capture stopped. Cancellation, frame-limit failure and other
+in-progress receive failures stop capture and require reset. Argument errors or
+a rejected competing receive do not disturb existing capture.
 
 ### Full-rate transfers
 
@@ -206,14 +262,17 @@ frame = await sink.recv_frame(max_transfers=1024)
 ```
 
 Last on the packet's limit-th transfer succeeds. If that transfer has no last,
-the helper clears ready at its falling-edge cleanup and raises `ValueError`, without
-accepting another transfer, returning a partial frame, draining or retrying.
+the helper raises `ValueError` without returning a partial frame, draining or
+retrying. On a ready-backed bus it first clears ready at the falling-edge
+cleanup, accepting no extra transfer. Without ready, it stops capture; later
+transfers might already be buffered, and physical acceptance cannot be prevented.
 Reset is then required. Both an unlimited receive and a length-limited receive
 need a simulation-time timeout for stalled traffic; a missing last with the
 default limit can also grow memory without bound. The limit applies to retained
 prefixes too: selecting a limit already reached by a retained unfinished packet
-raises before accepting more data. There is no bound on the number of unfinished
-streams. Reset, cancellation and in-progress failures discard partial assembly.
+raises before consuming further transfers. There is no bound on the number of
+unfinished streams unless a no-ready `buffer_capacity` is set. Reset,
+cancellation and in-progress failures discard partial assembly.
 
 Both helpers require last. Absent last, empty/non-sequence send input and invalid
 limits are rejected before wire activity and do not themselves require reset.
@@ -274,13 +333,13 @@ a raw unresolved identity discards all retained prefixes. This prevents later
 assembly from splicing across a raw-consumed beat or packet boundary. Other
 streams' retained prefixes are unaffected when the identity is known.
 
-Keep and strb require a **byte-aligned logic-vector payload**, with exactly one
-qualifier bit per byte. Scalar and record/custom HDL payloads have no inferred
-byte layout and reject these qualifiers. A custom Python adapter over a vector
+With data present, keep and strb require a **byte-aligned logic-vector payload**,
+with exactly one qualifier bit per byte. Without data, keep defines its own lane
+count from its handle width; strb is forbidden. Scalar and record/custom HDL
+payloads have no inferred byte layout and reject these qualifiers. A custom Python adapter over a vector
 can still use its physical byte lanes. The rightmost qualifier bit describes
 the least-significant data byte, regardless of the HDL index bounds/direction.
 User/id/dest do not require a byte layout and work with record payloads too.
-The standard's data-less qualifier case is not implemented yet.
 
 The keep/strb pairs per lane distinguish data (`1/1`), position (`1/0`) and null
 (`0/0`) bytes. Literal `0/1` is reserved: the source rejects it before driving
@@ -332,6 +391,12 @@ Driving meta-values is supported for deliberate propagation or fault-injection
 tests; ordinary reset clears them to zero. Sampled valid, ready and accepted
 last must be exactly 0 or 1, including rejection of weak L/H control values.
 
+Default endpoint typing is `PayloadValue | None`; `PayloadValue` itself remains
+the data-bearing scalar/vector/field-mapping input type. Default-adapter sends
+on a data-bearing bus reject `None`. A data-less bus requires `None` and rejects
+custom payload adapters. Supplying an adapter on a data-bearing bus retains its
+precise `T`, without adding `None`.
+
 Applications can supply a `Payload[T]` adapter using `payload=...` on an endpoint
 to work with a custom value type. Its synchronous `drive`, `read` and `clear`
 methods must not yield. `read` must return an independent snapshot, and `clear`
@@ -345,7 +410,8 @@ passed to `send` or `send_frame` until that call finishes.
 Always await `reset()` initially and after an in-progress operation fails or is
 cancelled, including frame length errors. Preflight argument errors are exempt.
 Source reset clears valid, last, every bound sideband and all owned payload
-leaves; sink reset clears ready and retained partial packet assembly.
+leaves; sink reset clears ready and all retained queued/partial packet state.
+No-ready capture stops immediately on reset and restarts after successful cleanup.
 Outputs clear at a falling edge, so reset also needs a running clock.
 A failed or cancelled reset leaves the endpoint unusable until reset succeeds.
 Reset is explicit local recovery; there is no automatic reset-pin monitoring.
@@ -369,11 +435,11 @@ DUT or discard its buffered transfers.
 ## Current scope
 
 The target is **AXI4-Stream**, excluding AXI5-Stream wake-up/parity extensions.
-The implemented subset currently requires data and ready, with explicit optional
-last/keep/strb/user/id/dest and interleaved packet assembly. Frame helpers require
-last; unframed traffic uses individual transfers. Permitted data/ready omissions,
-continuous queued reception without ready, and automatic protocol reset-pin
-monitoring remain to be implemented. This is not yet full-standard support.
+The implemented subset supports data/ready omissions, explicit optional
+last/keep/strb/user/id/dest, continuous no-ready capture and interleaved packet
+assembly. Frame helpers require last; unframed traffic uses individual transfers.
+Automatic protocol reset-pin monitoring remains to be implemented.
+This is not yet full-standard support.
 The timing model targets event-driven simulators and is tested
 with `nvc`; no support for other simulator timing models is claimed.
 

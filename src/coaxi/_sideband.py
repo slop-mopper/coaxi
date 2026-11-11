@@ -61,8 +61,10 @@ class _SidebandAccess:
 	def __init__(self, bus: AxiStreamBus) -> None:
 		self._handles = {role: handle for role in _ROLES if (handle := getattr(bus, role)) is not None}
 		self._lanes = 0
-		if bus.keep is not None or bus.strb is not None:
+		if bus.data is not None and (bus.keep is not None or bus.strb is not None):
 			self._lanes = len(bus.data) // 8
+		elif bus.keep is not None:
+			self._lanes = 1 if isinstance(bus.keep, LogicObject) else len(bus.keep)
 
 	def _validate(self, values: Mapping[str, Logic | LogicArray]) -> None:
 		if self._lanes:

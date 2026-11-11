@@ -54,20 +54,22 @@ class AxiStreamBus:
 	"""Bound AXI4-Stream signals; construction does not drive any handles.
 
 	Use :meth:`bind` for names/defaults, or pass handles directly. Data may be a
-	vector or record; valid, ready and last are one-bit logic. Ready and data
-	are currently required. All sidebands are explicitly selected.
-	Keep/strb require byte-aligned logic-vector data with one qualifier bit per
-	byte; record payloads have no implicit byte layout. User/id/dest accept any
+	vector or record; valid, ready and last are one-bit logic. Data and ready
+	may be absent (None); absent ready means every valid edge accepts.
+	All sidebands are explicitly selected. Without data, keep defines its own
+	lane count and strb is forbidden. When data is present, keep/strb require
+	byte-aligned logic-vector data with one qualifier bit per byte;
+	record payloads have no implicit byte layout. User/id/dest accept any
 	positive logic width. All roles and the clock must be non-overlapping;
 	only identical-handle aliases are checked, not payload-field/bit overlap.
 	"""
 
-	data: SimHandleBase
-	"""Payload handle, kept separate from its value representation."""
+	data: SimHandleBase | None
+	"""Payload handle, or None for data-less transfers."""
 	valid: _Control
 	"""Source-owned transfer-valid signal."""
-	ready: _Control
-	"""Sink-owned acceptance signal."""
+	ready: _Control | None
+	"""Sink-owned acceptance signal, or None for unconditional acceptance."""
 	last: _Control | None = None
 	"""Source-owned frame boundary, or None for an unframed stream."""
 	_entity: HierarchyObject | None = field(default=None, repr=False, compare=False)
@@ -91,7 +93,9 @@ class AxiStreamBus:
 			handle = getattr(self, role)
 			if handle is not None:
 				_logic(handle, role)
-		if self.keep is not None or self.strb is not None:
+		if self.data is None and self.strb is not None:
+			raise SignalBindingError("strb requires a data signal")
+		if self.data is not None and (self.keep is not None or self.strb is not None):
 			if not isinstance(self.data, LogicArrayObject) or len(self.data) == 0 or len(self.data) % 8:
 				raise SignalBindingError(
 					"keep/strb require byte-aligned logic-vector data; records have no byte layout"
@@ -121,9 +125,9 @@ class AxiStreamBus:
 		*,
 		prefix: str = "",
 		t_prefix: bool = True,
-		data: Signal | None = None,
+		data: bool | Signal | None = None,
 		valid: Signal | None = None,
-		ready: Signal | None = None,
+		ready: bool | Signal | None = None,
 		last: bool | Signal = False,
 		keep: bool | Signal = False,
 		strb: bool | Signal = False,
@@ -137,11 +141,14 @@ class AxiStreamBus:
 		``prefix="foo"`` generates ``foo_tdata`` etc.; an empty prefix generates
 		``tdata`` etc. ``t_prefix=False`` removes only the generated ``t``.
 		``data``, ``valid`` and ``ready`` override individual defaults with exact
-		child names or handles. Explicit names are never modified.
+		child names or handles. None retains each generated default; data=False
+		or ready=False explicitly omits that signal (True uses its default).
+		Valid is mandatory. Explicit names are never modified.
 		``last``, ``keep``, ``strb``, ``user``, ``id`` and ``dest`` independently
 		select optional signals: False omits, True requires the generated name,
 		and a name/handle binds it exactly. No optional signal is probed.
 		Byte qualifiers require byte-aligned vector data and one bit per byte.
+		Without data, keep may have any positive width; strb must be absent.
 		"""
 		stem = (f"{prefix}_" if prefix else "") + ("t" if t_prefix else "")
 
@@ -153,10 +160,14 @@ class AxiStreamBus:
 				return None
 			return _logic(_resolve(entity, stem + role if selection is True else selection, role), role)
 
+		data_handle = None if data is False else required("data", None if data is True else data)
+		ready_handle = (
+			None if ready is False else _control(required("ready", None if ready is True else ready), "ready")
+		)
 		return cls(
-			required("data", data),
+			data_handle,
 			_control(required("valid", valid), "valid"),
-			_control(required("ready", ready), "ready"),
+			ready_handle,
 			optional("last", last),
 			entity,
 			keep=optional("keep", keep),

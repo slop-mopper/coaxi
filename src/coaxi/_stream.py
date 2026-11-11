@@ -7,14 +7,17 @@
 import logging
 from typing import cast, overload
 from dataclasses import dataclass
+from collections import deque
 from collections.abc import Sequence
 
+import cocotb
+from cocotb.task import Task
 from cocotb.types import Logic, LogicArray
 from cocotb.simtime import get_sim_time
-from cocotb.triggers import RisingEdge, FallingEdge, current_gpi_trigger
+from cocotb.triggers import Event, RisingEdge, FallingEdge, current_gpi_trigger
 
 from ._binding import Signal, _Control, AxiStreamBus
-from ._payload import Payload, HandlePayload, PayloadValue
+from ._payload import Payload, HandlePayload, PayloadValue, _AbsentPayload
 from ._sideband import _Values, _identity, _SidebandAccess, AxiStreamSidebands
 
 _log = logging.getLogger("coaxi.stream")
@@ -29,7 +32,7 @@ class EndpointStateError(RuntimeError):
 
 
 class TransferReset(RuntimeError):
-	"""Local reset invalidated a pending transfer; wire activity is not undone."""
+	"""Local reset or close invalidated a pending transfer; wire activity is not undone."""
 
 
 @dataclass(frozen=True)
@@ -69,7 +72,14 @@ class _Endpoint[T]:
 	def __init__(self, bus: AxiStreamBus, clock: Signal, payload: Payload[T] | None) -> None:
 		self._bus = bus
 		self._clock = bus.resolve_clock(clock)
-		self._payload = payload if payload is not None else cast(Payload[T], HandlePayload(bus.data))
+		if bus.data is None and payload is not None:
+			raise ValueError("a payload adapter requires a data signal")
+		if payload is not None:
+			self._payload = payload
+		else:
+			default_payload = _AbsentPayload() if bus.data is None else HandlePayload(bus.data)
+			self._payload = cast(Payload[T], default_payload)
+		self._name = bus.valid._path
 		self._sidebands = _SidebandAccess(bus)
 		self._initialised = False
 		self._resetting = False
@@ -110,6 +120,14 @@ class _Endpoint[T]:
 			self._initialised = False
 			self._completed_at = None
 
+	def _invalidate(self) -> None:
+		self._initialised = False
+		self._active = None
+		self._completed_at = None
+
+	def _after_reset(self) -> None:
+		pass
+
 	def _clear(self) -> None:
 		raise NotImplementedError
 
@@ -133,27 +151,29 @@ class _Endpoint[T]:
 		if self._resetting:
 			raise EndpointStateError("reset is already active")
 		self._resetting = True
-		self._initialised = False
-		self._active = None
-		self._completed_at = None
+		self._invalidate()
 		try:
 			await FallingEdge(self._clock)
 			self._clear()
 			self._initialised = True
+			self._after_reset()
 			_log.debug("%s reset", type(self).__name__)
 		finally:
 			self._resetting = False
 
 
-class AxiStreamSource[T = PayloadValue](_Endpoint[T]):
+class AxiStreamSource[T = PayloadValue | None](_Endpoint[T]):
 	"""Drive individual transfers or frames, with stable data/last under backpressure.
 
 	``bus`` supplies the handles; ``clock`` is an exact name in its entity or
 	a handle. The clock must contain only literal 0/1 values from before the
 	first reset onwards, including while idle. Weak L/H and unresolved clocks
 	are unsupported; this caller precondition is not monitored.
-	``payload`` defaults to HandlePayload (T = PayloadValue); pass a Payload[T]
-	implementation for application-specific values.
+	``payload`` defaults to HandlePayload for data-bearing buses. Default T is
+	PayloadValue | None: absent data requires send(None), returns None at the
+	sink, and rejects an adapter. With data present, None is rejected by the
+	default adapter. Pass Payload[T] for precise application-specific types.
+	Absent ready accepts every valid edge without backpressure.
 
 	Await reset() before use. No background tasks or queues are started.
 	Only one send or send_frame may be active. Falling-edge drives and pre-update rising-edge
@@ -164,7 +184,7 @@ class AxiStreamSource[T = PayloadValue](_Endpoint[T]):
 
 	@overload
 	def __init__(
-		self: "AxiStreamSource[PayloadValue]", bus: AxiStreamBus, clock: Signal, *, payload: None = None
+		self: "AxiStreamSource[PayloadValue | None]", bus: AxiStreamBus, clock: Signal, *, payload: None = None
 	) -> None: ...
 
 	@overload
@@ -255,7 +275,7 @@ class AxiStreamSource[T = PayloadValue](_Endpoint[T]):
 					raise ValueError("send_frame requires a constant effective (id, dest)")
 				identity = key
 				await self._send_one(token, data[index], index == count - 1, metadata)
-			_log.debug("sent frame on %s, transfers=%s", self._bus.data._path, count)
+			_log.debug("sent frame on %s, transfers=%s", self._name, count)
 			self._finish()
 		except BaseException:
 			self._abort(token)
@@ -272,9 +292,9 @@ class AxiStreamSource[T = PayloadValue](_Endpoint[T]):
 		while True:
 			await RisingEdge(self._clock)
 			self._check(token)
-			if _bit(self._bus.ready, "ready"):
+			if self._bus.ready is None or _bit(self._bus.ready, "ready"):
 				break
-		_log.debug("sent transfer on %s, last=%s", self._bus.data._path, last)
+		_log.debug("sent transfer on %s, last=%s", self._name, last)
 		await FallingEdge(self._clock)
 		self._check(token)
 		self._bus.valid.set(0)
@@ -283,37 +303,170 @@ class AxiStreamSource[T = PayloadValue](_Endpoint[T]):
 		self._finish_beat()
 
 
-class AxiStreamSink[T = PayloadValue](_Endpoint[T]):
-	"""Accept individual transfers or frames; only an active receive asserts ready.
+class AxiStreamSink[T = PayloadValue | None](_Endpoint[T]):
+	"""Receive individual transfers or packets, with continuous capture without ready.
 
 	``bus``, ``clock`` and optional ``payload`` have the source's meanings,
 	including its unmonitored, literal-0/1 clock precondition.
 	Await reset() before use. The sink owns only ready and never clears incoming
-	payloads. One recv or recv_frame may be active; no background tasks or queues are started.
-	Immediately consecutive awaits can sustain one transfer per clock cycle;
-	ready need not pulse low between calls.
+	payloads. Only one recv or recv_frame may be active. With ready, reception
+	is call-driven; immediately consecutive awaits sustain one beat per cycle.
+	Without ready, reset starts continuous capture, including while idle.
+	``buffer_capacity`` is an optional positive count of all retained,
+	undelivered transfers, including packet prefixes and in-flight snapshots.
+	None is unlimited. A finite capacity is rejected on ready-backed buses.
+	OverflowError or a capture exception stops capture and is raised by the
+	current/next receive before older buffered values. Reset is required.
+	Backlog returns immediately without advancing simulation time; live
+	snapshots become available at the falling edge after acceptance.
+	Use close() to stop capture; a later reset() restarts it.
 	"""
 
 	@overload
 	def __init__(
-		self: "AxiStreamSink[PayloadValue]", bus: AxiStreamBus, clock: Signal, *, payload: None = None
+		self: "AxiStreamSink[PayloadValue | None]",
+		bus: AxiStreamBus,
+		clock: Signal,
+		*,
+		payload: None = None,
+		buffer_capacity: int | None = None,
 	) -> None: ...
 
 	@overload
-	def __init__(self, bus: AxiStreamBus, clock: Signal, *, payload: Payload[T]) -> None: ...
+	def __init__(
+		self, bus: AxiStreamBus, clock: Signal, *, payload: Payload[T], buffer_capacity: int | None = None
+	) -> None: ...
 
-	def __init__(self, bus: AxiStreamBus, clock: Signal, *, payload: Payload[T] | None = None) -> None:
+	def __init__(
+		self,
+		bus: AxiStreamBus,
+		clock: Signal,
+		*,
+		payload: Payload[T] | None = None,
+		buffer_capacity: int | None = None,
+	) -> None:
+		if buffer_capacity is not None:
+			if type(buffer_capacity) is not int:
+				raise TypeError("buffer_capacity must be a positive integer or None")
+			if buffer_capacity <= 0:
+				raise ValueError("buffer_capacity must be positive")
+			if bus.ready is not None:
+				raise ValueError("buffer_capacity is only supported without ready")
 		super().__init__(bus, clock, payload)
+		self._capacity = buffer_capacity
 		self._packets: dict[tuple[int, int], list[AxiStreamTransfer[T]]] = {}
+		self._queue: deque[AxiStreamTransfer[T]] = deque()
+		self._retained = 0
+		self._fault: Exception | None = None
+		self._changed = Event()
+		self._capture_task: Task[None] | None = None
+		self._capture_generation: object | None = None
+
+	def _notify(self) -> None:
+		self._changed.set()
+		self._changed = Event()
+
+	def _stop_capture(self) -> None:
+		self._capture_generation = None
+		if self._capture_task is not None:
+			self._capture_task.cancel()
+			self._capture_task = None
+
+	def _discard(self) -> None:
+		self._packets.clear()
+		self._queue.clear()
+		self._retained = 0
+
+	def _invalidate(self) -> None:
+		super()._invalidate()
+		self._stop_capture()
+		self._discard()
+		self._fault = None
+		self._notify()
+
+	def _after_reset(self) -> None:
+		if self._bus.ready is None:
+			generation = object()
+			self._capture_generation = generation
+			self._capture_task = cocotb.start_soon(self._capture(generation))
+
+	def _begin(self) -> object:
+		if self._fault is not None:
+			raise self._fault
+		return super()._begin()
+
+	def _check(self, token: object) -> None:
+		super()._check(token)
+		if self._fault is not None:
+			raise self._fault
 
 	def _abort(self, token: object) -> None:
 		if self._active is token:
-			self._packets.clear()
+			self._stop_capture()
+			self._discard()
+			self._notify()
 		super()._abort(token)
 
 	def _clear(self) -> None:
-		self._bus.ready.set(0)
-		self._packets.clear()
+		if self._bus.ready is not None:
+			self._bus.ready.set(0)
+		self._discard()
+
+	async def close(self) -> None:
+		"""Stop capture, invalidate pending receives and discard retained traffic.
+
+		No-ready capture stops immediately; a ready output is cleared at the
+		next falling edge. Reset/close may not overlap. No clock edge is needed
+		to close a no-ready sink. Repeated closes are safe. Await reset() to
+		restart; traffic accepted while stopped cannot be recovered. Pending
+		receives raise TransferReset when resumed. A no-ready waiter is also
+		woken without clock edges; ready-backed operations still await their edge.
+		As with reset, catch that exception inside spawned receive coroutines.
+		"""
+		if self._resetting:
+			raise EndpointStateError("reset or close is already active")
+		self._resetting = True
+		try:
+			self._invalidate()
+			if self._bus.ready is not None:
+				await FallingEdge(self._clock)
+				self._clear()
+		finally:
+			self._resetting = False
+
+	def _release(self, count: int) -> None:
+		if self._bus.ready is None:
+			self._retained -= count
+
+	async def _capture(self, generation: object) -> None:
+		try:
+			while self._capture_generation is generation:
+				await RisingEdge(self._clock)
+				if self._capture_generation is not generation:
+					return
+				if not _bit(self._bus.valid, "valid"):
+					continue
+				transfer = self._read_transfer()
+				if self._capacity is not None and self._retained >= self._capacity:
+					raise OverflowError(f"buffer_capacity={self._capacity} exceeded; reset required")
+				self._retained += 1
+				# Count the snapshot immediately, but publish it only at cleanup.
+				# A waiting receive therefore keeps the existing completion timing.
+				await FallingEdge(self._clock)
+				if self._capture_generation is not generation:
+					return
+				self._queue.append(transfer)
+				self._notify()
+		except Exception as exc:
+			# Observe faults here, even if the caller is idle. The receive API
+			# delivers the original exception before any older buffered values.
+			if self._capture_generation is generation:
+				self._fault = exc
+				self._notify()
+		finally:
+			if self._capture_generation is generation:
+				self._capture_generation = None
+				self._capture_task = None
 
 	async def recv(self) -> AxiStreamTransfer[T]:
 		"""Assert ready, capture one accepted transfer, clear ready, then return.
@@ -333,16 +486,23 @@ class AxiStreamSink[T = PayloadValue](_Endpoint[T]):
 		wire order. Discard any retained prefix for this transfer's identity,
 		so packet assembly cannot splice across a raw-consumed beat. If the
 		identity is unresolved, discard all retained prefixes conservatively.
+		Without ready, consume continuously captured traffic instead of driving.
+		Backlog returns immediately; a waiting receive completes at the falling
+		edge following acceptance. Capture faults take priority over backlog.
+		Absent data returns None.
 		"""
 		token = self._begin()
 		try:
 			transfer = await self._recv_one(token)
+			self._check(token)
 			try:
 				key = _identity(transfer.id, transfer.dest)
 			except ValueError:
+				self._release(sum(len(packet) for packet in self._packets.values()))
 				self._packets.clear()
 			else:
-				self._packets.pop(key, None)
+				self._release(len(self._packets.pop(key, [])))
+			self._release(1)
 			self._finish()
 			return transfer
 		except BaseException:
@@ -357,7 +517,8 @@ class AxiStreamSink[T = PayloadValue](_Endpoint[T]):
 		a length bound. Invalid arguments fail before wire activity and do not
 		require reset. A packet ending exactly at the limit succeeds. A packet
 		reaching that length without last fails after its falling-edge cleanup,
-		without accepting another transfer or draining.
+		without deliberately accepting another transfer or draining. Without
+		ready, stopping capture cannot prevent further physical acceptance.
 
 		Return a non-empty list of snapshots in packet-completion order.
 		Other streams' incomplete packets are retained for subsequent calls.
@@ -373,6 +534,10 @@ class AxiStreamSink[T = PayloadValue](_Endpoint[T]):
 		memory bound if last never arrives. Length errors, in-progress failures
 		and cancellation require reset and return no partial list; accepted
 		traffic is not undone. Local reset does not restore frame alignment.
+		Without ready, consume from continuous capture in wire order; backlog
+		may produce a complete packet immediately. buffer_capacity includes
+		unfinished prefixes and snapshots pending delivery. Capture faults take
+		priority over older buffered packets.
 		"""
 		if self._bus.last is None:
 			raise ValueError("recv_frame requires a bound last signal")
@@ -387,6 +552,7 @@ class AxiStreamSink[T = PayloadValue](_Endpoint[T]):
 				raise ValueError(f"retained packet has already reached max_transfers={max_transfers}; reset required")
 			while True:
 				transfer = await self._recv_one(token)
+				self._check(token)
 				try:
 					key = _identity(transfer.id, transfer.dest)
 				except ValueError as exc:
@@ -395,9 +561,8 @@ class AxiStreamSink[T = PayloadValue](_Endpoint[T]):
 				packet.append(transfer)
 				if transfer.last:
 					del self._packets[key]
-					_log.debug(
-						"received packet on %s, identity=%s, transfers=%s", self._bus.data._path, key, len(packet)
-					)
+					_log.debug("received packet on %s, identity=%s, transfers=%s", self._name, key, len(packet))
+					self._release(len(packet))
 					self._finish()
 					return packet
 				if max_transfers is not None and len(packet) >= max_transfers:
@@ -406,26 +571,14 @@ class AxiStreamSink[T = PayloadValue](_Endpoint[T]):
 			self._abort(token)
 			raise
 
-	async def _recv_one(self, token: object) -> AxiStreamTransfer[T]:
-		await self._start_edge()
-		self._check(token)
-		self._bus.ready.set(1)
-		while True:
-			await RisingEdge(self._clock)
-			self._check(token)
-			if _bit(self._bus.valid, "valid"):
-				data = self._payload.read()
-				last = None if self._bus.last is None else _bit(self._bus.last, "last")
-				try:
-					metadata = self._sidebands.read()
-				except ValueError as exc:
-					raise ProtocolValueError(str(exc)) from exc
-				break
-		_log.debug("received transfer on %s, last=%s", self._bus.data._path, last)
-		await FallingEdge(self._clock)
-		self._check(token)
-		self._bus.ready.set(0)
-		self._finish_beat()
+	def _read_transfer(self) -> AxiStreamTransfer[T]:
+		data = self._payload.read()
+		last = None if self._bus.last is None else _bit(self._bus.last, "last")
+		try:
+			metadata = self._sidebands.read()
+		except ValueError as exc:
+			raise ProtocolValueError(str(exc)) from exc
+		_log.debug("received transfer on %s, last=%s", self._name, last)
 		return AxiStreamTransfer(
 			data,
 			last,
@@ -435,3 +588,25 @@ class AxiStreamSink[T = PayloadValue](_Endpoint[T]):
 			metadata.get("id"),
 			metadata.get("dest"),
 		)
+
+	async def _recv_one(self, token: object) -> AxiStreamTransfer[T]:
+		if self._bus.ready is None:
+			while True:
+				self._check(token)
+				if self._queue:
+					return self._queue.popleft()
+				await self._changed.wait()
+		await self._start_edge()
+		self._check(token)
+		self._bus.ready.set(1)
+		while True:
+			await RisingEdge(self._clock)
+			self._check(token)
+			if _bit(self._bus.valid, "valid"):
+				transfer = self._read_transfer()
+				break
+		await FallingEdge(self._clock)
+		self._check(token)
+		self._bus.ready.set(0)
+		self._finish_beat()
+		return transfer

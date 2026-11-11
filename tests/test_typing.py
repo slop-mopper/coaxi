@@ -16,7 +16,7 @@ import pytest
 def test_constructor_types(tmp_path: Path, endpoint: str, scenario: str) -> None:
 	"""Check endpoint's scenario in a temporary source file below tmp_path."""
 	statements = {
-		"default": f"assert_type({endpoint}(bus, clock), {endpoint}[PayloadValue])",
+		"default": f"assert_type({endpoint}(bus, clock), {endpoint}[PayloadValue | None])",
 		"custom": f"assert_type({endpoint}(bus, clock, payload=payload), {endpoint}[int])",
 		"missing": f"{endpoint}[int](bus, clock)",
 	}
@@ -42,6 +42,7 @@ def test_constructor_types(tmp_path: Path, endpoint: str, scenario: str) -> None
 		capture_output=True,
 		text=True,
 		check=False,
+		timeout=60,
 	)
 	output = result.stdout + result.stderr
 	if scenario == "missing":
@@ -55,7 +56,7 @@ def test_constructor_types(tmp_path: Path, endpoint: str, scenario: str) -> None
 def test_frame_types(tmp_path: Path, scenario: str) -> None:
 	"""Preserve generic payload and transfer-list types through the frame APIs."""
 	custom = scenario != "default"
-	value_type = "int" if custom else "PayloadValue"
+	value_type = "int" if custom else "PayloadValue | None"
 	adapter = ", payload=payload" if custom else ""
 	samples = '["wrong"]' if scenario == "wrong_input" else "[1, 2]"
 	source = tmp_path / "frame_typing_case.py"
@@ -84,6 +85,7 @@ def test_frame_types(tmp_path: Path, scenario: str) -> None:
 		capture_output=True,
 		text=True,
 		check=False,
+		timeout=60,
 	)
 	output = result.stdout + result.stderr
 	if scenario == "wrong_input":

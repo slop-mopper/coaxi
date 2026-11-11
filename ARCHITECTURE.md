@@ -12,8 +12,8 @@ former `cocotbext.axi` namespace.
 The initial AXI-Stream implementation supports individual transfers and complete
 frames, all AXI4-Stream transfer sidebands, and interleaved packet assembly.
 The agreed target is AXI4-Stream only, excluding AXI5-Stream wake-up/parity.
-AXI4 memory-mapped, AXI4-Lite, permitted data/ready omissions, continuous queued
-capture without ready, and automatic reset-pin monitoring are not implemented.
+Data/ready omissions and continuous queued capture without ready are supported.
+AXI4 memory-mapped, AXI4-Lite and automatic reset-pin monitoring are not implemented.
 The current subset is not yet the full-standard target.
 
 ## Components
@@ -27,7 +27,10 @@ The current subset is not yet the full-standard target.
   field mappings. `Payload[T]` lets applications supply their own representation.
   Reads retain HDL logic values; integer conversion is explicit. Endpoint
   constructor overloads require an adapter when using application value types;
-  omitting the adapter selects `PayloadValue`.
+  omitting the adapter selects `PayloadValue | None`. A private absent-data
+  adapter accepts/returns only None, with no handle access. An explicit adapter
+  requires data; with data present its T remains precise, and the default
+  HandlePayload rejects None.
 - `_sideband.py` keeps metadata conversion separate from generic payload access.
   `AxiStreamSidebands` is an optional immutable source input; it is unnecessary
   for bare-bones traffic. Bound defaults are keep=ones, strb=effective keep,
@@ -36,7 +39,8 @@ The current subset is not yet the full-standard target.
   raw and do not establish protocol validity. No byte packing is performed.
 - `_stream.py` provides `AxiStreamSource`, `AxiStreamSink` and
   `AxiStreamTransfer[T]`. An endpoint permits one active operation (one transfer
-  or one whole frame) and has no background queue. Drives occur at falling edges;
+  or one whole frame). Ready-backed reception is call-driven without a queue;
+  no-ready reception uses a continuously running collector. Drives occur at falling edges;
   transfer values are sampled
   at rising edges before clocked HDL updates. Completion schedules cleanup at
   the following falling edge. Immediately consecutive calls reuse that edge
@@ -68,10 +72,12 @@ identity (all prefixes if unresolved), preventing assembly across consumed beats
 or packet boundaries. It does not replay prefixes or discard other known streams.
 None collects without a length/memory bound. The optional positive limit applies
 to each packet, including retained prefixes; it does not bound stream count.
-Last exactly at the limit succeeds. Without last at that length, cleanup deasserts
-ready and raises ValueError with no extra acceptance or draining. A later call
-whose limit was already reached by a retained prefix fails before more acceptance.
+Last exactly at the limit succeeds. Without last at that length, a ready-backed
+sink deasserts ready at cleanup and raises ValueError with no extra acceptance
+or draining. A no-ready sink stops capture, discarding undelivered traffic.
+A retained prefix already at the limit fails before consuming further snapshots.
 Reset, cancellation and in-progress faults discard partial packet assembly.
+Without ready, a length error stops capture but cannot prevent physical acceptance.
 
 Public single/frame operations acquire one ownership token, share private
 token-aware per-transfer routines, and release only after final cleanup.
@@ -83,6 +89,41 @@ do not acquire ownership or alter endpoint state. In-progress errors (including
 sequence indexing or frame limits) and cancellation require reset. A receive
 starts at the next accepted transfer, possibly partway through an existing
 frame; local reset restores outputs but does not restore frame alignment.
+
+### No-ready capture
+
+After successful reset cleanup, a no-ready sink starts a generation-owned cocotb
+task. Every valid rising edge snapshots data/last/sidebands immediately, before
+HDL updates. The accepted snapshot counts towards retention immediately and is
+published to a deque at the following falling edge. A waiting receive wakes then;
+a receive with existing backlog dequeues without advancing simulation time.
+No historical cleanup edge is recorded/reused for backlog reads.
+The collector persists independently of successful foreground receives.
+
+Optional positive `buffer_capacity` counts all undelivered retained snapshots:
+queued, awaiting cleanup/publication, in a foreground receive and in unfinished
+packets. Only delivery or explicit prefix disposal frees capacity. Moving a
+snapshot between those locations does not change the count. None is unlimited;
+a finite capacity is rejected for ready-backed sinks.
+
+OverflowError or an ordinary capture exception is observed and latched inside the
+collector, stopping it and waking receivers. Receives check the fault before
+dequeue/delivery, so older backlog cannot hide an error. The fault remains until
+reset/close. No unobserved background exception is used for notification.
+Foreground receive cancellation/failure also stops capture and requires reset.
+Reset clears retained state and faults before yielding; successful cleanup starts
+a new collector. Invalidating a generation precedes task cancellation, and all
+post-edge publication/finalisation is generation-guarded. Old foreground tasks
+are also token-guarded before retiring counts or changing assembly.
+Wake-up events are replaced after notification to avoid stale-set busy loops.
+
+`await sink.close()` stops capture, invalidates pending operations and discards
+queued/partial state, with no clock edge needed on no-ready sinks. A ready-backed
+sink also clears ready at a falling edge. Close is repeatable; reset/close may
+not overlap, and reset is required to restart. Captures before initial reset or
+while stopped are unavailable. Stopping capture cannot backpressure physical
+traffic. Pending no-ready receives are woken with TransferReset on close/reset;
+spawned receivers must observe that exception internally.
 
 The source owns data, valid, last and all selected sidebands; the sink owns ready
 and its partial packet assembly. Explicit `reset()`
@@ -117,8 +158,13 @@ supplied names receive no prefix, suffix or case changes. Names need not share
 a pattern or be valid Python attribute names. Optional last is explicitly
 selected, as are keep/strb/user/id/dest; no optional signal is discovered merely
 because a naming default exists. Bare-bones binding is unchanged.
-This subset still requires data and ready. Byte qualifiers require a byte-aligned
-LogicArrayObject payload and exactly one bit per byte; no scalar/record layout is
+Generated data/ready defaults remain unchanged; bind(data=False, ready=False)
+explicitly omits either signal. None still means generated names in bind; direct
+construction uses None for an absent handle. Every valid edge accepts without
+ready. Absent data transfers explicitly use None, including in frame sequences.
+Without data, keep defines lanes from its own width and strb is forbidden.
+With data present, byte qualifiers require a byte-aligned LogicArrayObject
+payload and exactly one bit per byte; no scalar/record layout is
 inferred. Qualifier significance is positional (rightmost bit is the least
 significant byte), independent of HDL indices. User/id/dest accept any positive
 logic width and do not depend on payload shape.
@@ -167,6 +213,14 @@ a caller's name.
   qualifier faults, metadata preflight validation and reset ownership. Packet
   cases cover id/dest demultiplexing, completion order, per-packet metadata,
   null final beats, retained-prefix limits, cancellation and raw wire order.
+- `tests/omission_cases.py` covers all four data/ready combinations, data-less
+  keep lanes, unchanged naming defaults and rejected adapters/strb without data.
+  Independent peers and the registered DUT check idle capture, one accepted
+  beat per rising edge, pre-update snapshots, live cleanup timing and immediate
+  backlog dequeue. Capacity tests include partial packets and in-flight values;
+  faults are delivered error-first while idle/waiting. Recovery cases cover
+  reset/cancel/close, stale receivers/collectors and close with a stopped clock.
+  Records/meta-values, packet limits and mixed raw/frame retirement are covered.
 - `tests/handle_cases.py` exercises scalar payloads with one-bit vector controls
   and a one-bit vector clock, using both ascending and descending non-zero
   indices. It checks full-rate frames, independent scalar snapshots, deliberate

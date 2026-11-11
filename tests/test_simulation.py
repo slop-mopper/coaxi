@@ -11,7 +11,7 @@ from cocotb_tools.runner import get_runner
 
 
 @pytest.mark.parametrize("trust_inertial", ["0", "1"])
-@pytest.mark.parametrize("suite", ["regression", "full_rate", "frames", "handles", "sidebands", "example"])
+@pytest.mark.parametrize("suite", ["regression", "full_rate", "frames", "handles", "sidebands", "omissions", "example"])
 def test_stream_simulation(tmp_path: Path, trust_inertial: str, suite: str) -> None:
 	"""Build in tmp_path and run suite with the selected write mode."""
 	tests = Path(__file__).parent.resolve()
@@ -21,6 +21,7 @@ def test_stream_simulation(tmp_path: Path, trust_inertial: str, suite: str) -> N
 		"frames": "frame_cases",
 		"handles": "handle_cases",
 		"sidebands": "sideband_cases",
+		"omissions": "omission_cases",
 		"example": "stream_loopback",
 	}[suite]
 	test_dir = tests.parent / "examples" if suite == "example" else tests

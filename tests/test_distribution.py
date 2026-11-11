@@ -61,6 +61,7 @@ def test_distribution(tmp_path: Path) -> None:
 			"tests/frame_cases.py",
 			"tests/handle_cases.py",
 			"tests/sideband_cases.py",
+			"tests/omission_cases.py",
 			"tests/hdl/stream_dut.vhd",
 			"examples/stream_loopback.py",
 			*[f"src/coaxi/{name}" for name in package_files],
@@ -109,6 +110,8 @@ else:
 	raise AssertionError("unresolved payload was converted")
 assert inspect.iscoroutinefunction(coaxi.AxiStreamSource.send_frame)
 assert inspect.iscoroutinefunction(coaxi.AxiStreamSink.recv_frame)
+assert inspect.iscoroutinefunction(coaxi.AxiStreamSink.close)
+assert inspect.signature(coaxi.AxiStreamSink).parameters["buffer_capacity"].default is None
 assert inspect.signature(coaxi.AxiStreamSink.recv_frame).parameters["max_transfers"].default is None
 """
 	subprocess.run(

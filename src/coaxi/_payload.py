@@ -38,6 +38,20 @@ class Payload[T](Protocol):
 		...
 
 
+class _AbsentPayload:
+	"""Represent a physically absent payload, without accessing any HDL handle."""
+
+	def read(self) -> None:
+		return None
+
+	def drive(self, value: None) -> None:
+		if value is not None:
+			raise ValueError("an absent data signal requires data=None")
+
+	def clear(self) -> None:
+		pass
+
+
 class HandlePayload:
 	"""Access logic/vector leaves or named containers such as VHDL records.
 
@@ -65,6 +79,8 @@ class HandlePayload:
 		raise TypeError("unsupported payload handle")
 
 	def _prepare(self, value: PayloadValue) -> list[tuple[LogicObject | LogicArrayObject, Logic | LogicArray]]:
+		if value is None:
+			raise TypeError("None requires an absent data signal")
 		if self._children:
 			if not isinstance(value, Mapping) or value.keys() != self._children.keys():
 				raise ValueError(f"{self._handle._path}: expected exactly these fields: {list(self._children)}")
