@@ -1,0 +1,135 @@
+# AGENTS.md
+# SPDX-License-Identifier: CC0-1.0
+# This file was created by an AI model: openai/CLIProxyAPI/gpt-6.1-sol
+
+## Project purpose
+
+This project is a ground-up rewrite of `cocotbext-axi`. It provides helpers for
+interacting with AXI4, AXI4-Lite, and AXI-Stream interfaces in cocotb testbenches.
+
+The first implementation should make AXI-Stream work well, with a small, clear
+foundation that can later support AXI4 and AXI4-Lite. Do not implement the other
+protocols ahead of that goal or build abstractions solely for hypothetical needs.
+
+Do not depend on `cocotb-bus` or `cocotbext-bus`. Keep signal binding simple and
+within this library.
+
+## Interface requirements
+
+### Signal names
+
+- Support both standard AXI-Stream names such as `foo_tvalid` and `foo_tready`,
+  and names such as `foo_valid` and `foo_ready`.
+- An explicit option to include or omit the `t` prefix is sufficient. Apply it
+  consistently to the relevant signals.
+- Avoid assumptions about signal names beyond the documented binding options.
+
+### Data types
+
+- Support ordinary `std_logic_vector` payloads and custom HDL data types.
+- A VHDL record such as `IQ_t`, containing two `signed(15 downto 0)` fields,
+  should be usable as naturally as a vector payload.
+- Keep payload access and conversion separate from handshake and framing logic.
+  Do not require every payload to be flattened into an integer or byte sequence.
+
+### Transactions and framing
+
+- Provide straightforward support for unframed streams without `tlast` and
+  framed streams with `tlast`.
+- Keep the value of `tlast` available for individual transfers, even when using
+  higher-level frame helpers.
+- Document which optional signals an operation needs. Do not silently assume
+  that every interface has every AXI-Stream sideband signal.
+
+### Meta-values and reset
+
+- Handle HDL meta-values such as `X` and `U` explicitly. Do not silently convert
+  them into ordinary data values.
+- Drive meta-values only for a clear, documented protocol or testing reason.
+- Reset must restore the library's driven signals and internal state to defined
+  values, clearing meta-values that the library introduced where appropriate.
+- Make unsupported values or conversions produce clear errors.
+
+### Logging
+
+Use DEBUG-level logging where useful for observing transfers, framing, reset,
+and other bus activity. Avoid unconditional printing and routine transaction
+messages at higher log levels.
+
+## Python and development tools
+
+- Target Python 3.13 and use `uv` for dependency and environment management.
+- Use a project-local, `uv`-managed `.venv` for Python work. Run tools through
+  `uv run` rather than relying on a globally activated environment.
+- Avoid system-wide package installation. If sandbox restrictions prevent
+  environment creation, dependency installation, or tool execution, report the
+  limitation rather than working around those restrictions.
+- Use modern Python practices and keep the design straightforward.
+- Use cocotb 2.1.0 or later. Keep it as a runtime dependency in `pyproject.toml`.
+- Use Pyrefly for type checking with its default configuration. Do not add
+  Pyrefly overrides unless requested.
+- Use Ruff for formatting and linting. Follow the settings in `pyproject.toml`:
+  a 120-character line length, tab indentation, double quotes, docstring code
+  formatting, and the supplied lint and import-sorting rules.
+- Run `uv run pyrefly check`, `uv run ruff format --check .`, and
+  `uv run ruff check .`. Apply formatting with `uv run ruff format .`.
+
+## Public APIs and documentation
+
+- Give every public function, method, class, and type a succinct, useful
+  docstring or equivalent documentation.
+- Give all public function and method parameters and return values type
+  annotations. Annotate public attributes and other exposed types as appropriate.
+- Choose self-describing parameter names. Still explain each parameter's meaning
+  in the function documentation, including units, defaults, or constraints where
+  relevant.
+- Document behaviour that callers need to understand, especially reset,
+  handshake timing, framing, payload conversion, and meta-value handling.
+
+## Language and style
+
+- Use British English in code, comments, documentation, and user-facing prose:
+  for example, `initialise`, `serialise`, and `colour`.
+- Preserve spelling required by existing APIs, protocol names, identifiers, and
+  external tools.
+- Write simple, direct English. Use technical terms when they have a precise,
+  useful meaning; avoid unnecessary jargon.
+- Avoid stock assistant phrasing, rhetorical contrasts such as “not X but Y”,
+  and inflated claims.
+
+## Source headers and licence
+
+The project licence is CC0-1.0. Start every new first-party source file with:
+
+```python
+# <FILENAME>
+# SPDX-License-Identifier: CC0-1.0
+# This file was created by an AI model: <EXACT-MODEL-ID>
+```
+
+Replace `<FILENAME>` with the file's basename, without any directory components.
+Replace `<EXACT-MODEL-ID>` with the exact identifier of the model creating the
+file, rather than a generic assistant name. Do not invent an identifier.
+Use the language's comment syntax where `#` is unsuitable, such as `--` for
+VHDL, while retaining the same header text.
+
+## HDL and simulation
+
+- Use `nvc` as the simulator. It is installed in the development environment.
+- Write any required HDL DUTs in VHDL-2008.
+- Test the supported naming styles, framed and unframed transfers, custom data
+  types, meta-values, reset behaviour, and backpressure as the relevant features
+  are implemented.
+
+## Architecture and commits
+
+- Maintain `ARCHITECTURE.md` as an accurate description of the implemented
+  architecture, including the main components, their responsibilities, and
+  important design decisions.
+- Before every commit, review the code changes against `ARCHITECTURE.md`.
+  Update it whenever needed so that all architectural effects of those changes
+  are reflected. Do not describe planned features as already implemented.
+- Commit work in self-contained, appropriately sized chunks. Keep unrelated
+  changes separate and use succinct, readable commit messages.
+- Run the relevant tests, type checks, and formatting checks before committing.
+  State which checks ran and report any that could not run, with the reason.

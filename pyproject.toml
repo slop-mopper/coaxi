@@ -1,0 +1,36 @@
+# pyproject.toml
+# SPDX-License-Identifier: CC0-1.0
+# This file was created by an AI model: openai/CLIProxyAPI/gpt-6.1-sol
+
+[project]
+name = "cocotbext-axi-redux"
+version = "0.1.0"
+description = "AXI interface helpers for cocotb testbenches."
+requires-python = ">=3.13"
+license = "CC0-1.0"
+dependencies = [
+	"cocotb>=2.1.0",
+]
+
+[dependency-groups]
+dev = [
+	"pyrefly",
+	"ruff",
+]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+ignore = ["I001", "BLE001"]
+
+[tool.ruff.lint.isort]
+force-single-line = true
+from-first = false
+length-sort = true
+no-sections = true
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "tab"
+docstring-code-format = true
