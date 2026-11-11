@@ -12,10 +12,12 @@ protocol implementation, Python package, HDL DUT, or tests have been added.
 - `AGENTS.md` records the project requirements and working rules.
 - `pyproject.toml` declares the project metadata, Python requirement, runtime
   dependencies, development tools, and Ruff settings.
+- `uv.lock` records the resolved dependency versions and package hashes.
 - `.python-version` selects Python 3.13 for `uv`.
 - `.gitignore` excludes the local environment, Python bytecode, and tool caches.
 
-Use `uv sync` to create the project-local `.venv` and resolve dependencies.
+Use `uv sync --locked` to create the project-local `.venv` with the dependency
+versions recorded in `uv.lock`.
 The runtime dependency is cocotb 2.1.0 or later. Pyrefly and Ruff are development
 dependencies. Pyrefly uses its default configuration.
 
