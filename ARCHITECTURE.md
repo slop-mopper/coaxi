@@ -9,9 +9,9 @@ package lives in `src/coaxi` and exposes its public API from `coaxi.__init__`.
 Hatchling builds the distribution. There is no compatibility package under the
 former `cocotbext.axi` namespace.
 
-The first single-transfer AXI-Stream implementation is under development.
-AXI4, AXI4-Lite, higher-level frame helpers, other optional sidebands and
-automatic reset-pin monitoring are not implemented.
+The initial AXI-Stream implementation supports individual transfers and complete
+frames. AXI4, AXI4-Lite, other optional sidebands and automatic reset-pin
+monitoring are not implemented.
 
 ## Components
 
@@ -25,8 +25,9 @@ automatic reset-pin monitoring are not implemented.
   constructor overloads require an adapter when using application value types;
   omitting the adapter selects `PayloadValue`.
 - `_stream.py` provides `AxiStreamSource`, `AxiStreamSink` and
-  `AxiStreamTransfer[T]`. An endpoint permits one active transfer and has no
-  background queue. Drives occur at falling edges; transfer values are sampled
+  `AxiStreamTransfer[T]`. An endpoint permits one active operation (one transfer
+  or one whole frame) and has no background queue. Drives occur at falling edges;
+  transfer values are sampled
   at rising edges before clocked HDL updates. Completion schedules cleanup at
   the following falling edge. Immediately consecutive calls reuse that edge
   to sustain one accepted transfer per rising edge when data and ready permit.
@@ -35,6 +36,27 @@ automatic reset-pin monitoring are not implemented.
   Other simulator phases, later times, reset and failures invalidate reuse.
   Cleanup writes can be superseded on the same edge; valid/ready need not pulse
   low between calls. Initial calls still wait for a fresh falling edge.
+
+`send_frame(Sequence[T])` requires non-empty input and a bound last signal,
+generating last only on the final transfer. Values are caller-owned and must
+remain unchanged until completion; payload validation occurs per transfer.
+`recv_frame(*, max_transfers=None)` requires last and returns a non-empty
+`list[AxiStreamTransfer[T]]` through the first accepted last. None collects
+without a length/memory bound; an optional positive integer counts accepted
+transfers. Last exactly at the limit succeeds. Without last at that limit,
+cleanup deasserts ready and then raises ValueError, with no extra acceptance,
+partial result or automatic draining.
+
+Public single/frame operations acquire one ownership token, share private
+token-aware per-transfer routines, and release only after final cleanup.
+Per-transfer cleanup records the reusable edge without releasing ownership.
+This preserves full rate within/across frames and mixed single/frame calls.
+The outer failure handler invalidates only its own token, so an interrupted
+old frame cannot invalidate newer work after reset. Preflight argument failures
+do not acquire ownership or alter endpoint state. In-progress errors (including
+sequence indexing or frame limits) and cancellation require reset. A receive
+starts at the next accepted transfer, possibly partway through an existing
+frame; local reset restores outputs but does not restore frame alignment.
 
 The source owns data, valid and last; the sink owns ready. Explicit `reset()`
 invalidates pending work and clears owned outputs at a falling edge. Failed or
@@ -80,7 +102,8 @@ a caller's name.
 
 - `tests/test_values.py` covers explicit numeric conversion.
 - `tests/test_typing.py` checks default/custom constructor inference and
-  rejection of specialised endpoints without adapters using default Pyrefly.
+  rejection of specialised endpoints without adapters, and generic frame method
+  input/result types using default Pyrefly.
 - `tests/stream_cases.py` contains cocotb cases for binding, vector/record
   payloads, framing, timing, backpressure, reset and cancellation. Recovery
   cases include interruption between acceptance and cleanup, cancellation of
@@ -92,10 +115,16 @@ a caller's name.
   source gaps; other cases check simulator-phase/time guards and chained
   failures. Interrupted full-rate receives cover adapter failure, cancellation
   and local reset after acceptance, preserving the DUT's buffered next value.
+- `tests/frame_cases.py` covers frame-wide ownership, singleton/multiple frames,
+  full-rate intra/inter-frame and mixed API boundaries, independent peers with
+  source gaps/final-beat stalls, record/meta-value/custom payload snapshots,
+  optional-limit boundaries, preflight validation and incomplete-frame recovery.
+  Interruptions cover intermediate/final acceptance before cleanup, stale tasks
+  after reset, adapter/control failures and sequence access failures.
 - `tests/hdl/stream_dut.vhd` is the VHDL-2008 DUT, including a registered stream
   path and a two-field signed IQ record.
 - `examples/stream_loopback.py` is a bounded cocotb usage example for unframed
-  vectors and framed signed IQ records on the fixture's undriven buses.
+  vectors and signed IQ-record frame helpers on the fixture's undriven buses.
 - `tests/test_simulation.py` runs the cocotb regression and usage example with
   `nvc` in both inertial write modes. `uv run pytest -q` runs the Python and
   simulator tests.

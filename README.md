@@ -6,8 +6,8 @@
 
 AXI interface helpers for cocotb testbenches, written for Python 3.13.
 This is a ground-up rewrite of `cocotbext-axi`, with AXI-Stream as the first
-implementation goal. The first single-transfer API is under development;
-AXI4, AXI4-Lite and higher-level frame helpers are not implemented yet.
+implementation goal. The initial AXI-Stream API supports individual transfers
+and complete frames; AXI4 and AXI4-Lite are not implemented yet.
 
 The distribution and Python import name are both `coaxi`:
 
@@ -135,8 +135,8 @@ Normal Python processing without a simulator wait does not consume a clock cycle
 ## Framing and payloads
 
 Unframed transfers omit last and return `transfer.last is None`. When last is
-bound, **every** send must explicitly supply `last=False` or `last=True`. Last
-is captured on each accepted transfer; there is no implicit frame assembly:
+bound, every individual `send()` must explicitly supply `last=False` or
+`last=True`. Individual `recv()` calls retain last without assembling a frame:
 
 ```python
 await source.send(first_sample, last=False)
@@ -144,7 +144,59 @@ await source.send(final_sample, last=True)
 ```
 
 Here the peer must already be receiving. These are individual transfers on a
-framed bus, not a higher-level frame API.
+framed bus.
+
+### Frame helpers
+
+With last bound on both endpoints, send a non-empty sequence of payloads and
+receive a list of `AxiStreamTransfer[T]` snapshots:
+
+```python
+# Run concurrently on an otherwise undriven framed bus.
+sending = cocotb.start_soon(source.send_frame([first_sample, final_sample]))
+frame = await sink.recv_frame()
+await sending
+assert [transfer.last for transfer in frame] == [False, True]
+```
+
+`send_frame(data)` takes a finite `Sequence[T]`, such as a list or tuple, and
+generates `last=False` on all but the final transfer. Input elements are payloads,
+not transfer objects. Generators and empty sequences are rejected. The sequence
+and its payloads remain caller-owned: do not mutate them until the call finishes.
+Payloads are validated as they are driven; a later invalid payload can fail after
+an earlier prefix has been accepted. Arbitrary custom values are not deep-copied.
+
+`recv_frame(*, max_transfers=None)` collects through the first accepted
+`last=True`, retaining every payload snapshot and sampled last. The default has
+**no length or memory bound**. An optional positive integer `max_transfers`
+limits accepted transfers, not elapsed cycles:
+
+```python
+frame = await sink.recv_frame(max_transfers=1024)
+```
+
+Last on the limit-th transfer succeeds. If that transfer has no last, the helper
+clears ready at its falling-edge cleanup and raises `ValueError`, without
+accepting another transfer, returning a partial frame, draining or retrying.
+Reset is then required. Both an unlimited receive and a length-limited receive
+need a simulation-time timeout for stalled traffic; a missing last with the
+default limit can also grow memory without bound.
+
+Both helpers require last. Absent last, empty/non-sequence send input and invalid
+limits are rejected before wire activity and do not themselves require reset.
+A frame operation reserves its endpoint through every transfer and final cleanup;
+overlapping single-transfer or frame calls raise `EndpointStateError`. Frame
+helpers share the individual-transfer timing and sustain full rate within frames
+and between immediately consecutive calls, including mixed single/frame calls.
+
+Collection begins at the next accepted transfer. Last marks the end, not the
+start, so a frame receive after individual receives returns the remaining suffix.
+In-progress failures, cancellation or reset can leave an accepted prefix or even
+an entire frame on the peer. There is no rollback or automatic retry. Local reset
+restores owned outputs but **does not restore frame alignment**; coordinated
+recovery with the peer or DUT may be necessary.
+
+### Payloads
 
 Payload access is separate from handshake logic. The default `HandlePayload`
 adapter accepts scalar logic, vectors and named containers such as VHDL records.
@@ -178,11 +230,12 @@ methods must not yield. `read` must return an independent snapshot, and `clear`
 must define every owned leaf. A custom source adapter can partially write before
 raising; recovery does not roll those writes back. The sink never calls the
 payload's `clear`, since it does not own incoming data. Do not mutate a value
-passed to `send` until that call finishes.
+passed to `send` or `send_frame` until that call finishes.
 
 ## Reset, errors and cancellation
 
-Always await `reset()` initially and after a failed or cancelled transfer.
+Always await `reset()` initially and after an in-progress operation fails or is
+cancelled, including frame length errors. Preflight argument errors are exempt.
 Source reset clears valid, last and all owned payload leaves; sink reset clears
 ready. Outputs clear at a falling edge, so reset also needs a running clock.
 A failed or cancelled reset leaves the endpoint unusable until reset succeeds.
@@ -191,9 +244,9 @@ Reset is explicit local recovery; there is no automatic reset-pin monitoring.
 Local reset invalidates pending operations with `TransferReset`. When reset
 may interrupt a spawned operation, catch this exception **inside that coroutine**;
 cocotb can fail a test on an unobserved task exception before a later await
-observes it. Concurrent transfers on one endpoint, overlapping reset calls, and
-transfers started while reset is active raise `EndpointStateError`. Reset may
-interrupt an active transfer. Invalid sampled controls raise `ProtocolValueError`,
+observes it. Concurrent operations on one endpoint, overlapping reset calls, and
+operations started while reset is active raise `EndpointStateError`. Reset may
+interrupt an active transfer or frame. Invalid sampled controls raise `ProtocolValueError`,
 and invalid bindings raise
 `SignalBindingError`.
 
@@ -206,9 +259,10 @@ DUT or discard its buffered transfers.
 
 ## Current scope
 
-The implemented subset requires ready and optionally supports last. Other
-AXI-Stream sidebands, frame helpers and automatic reset monitoring are not yet
-implemented. The timing model targets event-driven simulators and is tested
+The implemented subset requires ready and optionally supports last. Frame helpers
+require last; unframed traffic uses individual transfers. Other AXI-Stream
+sidebands and automatic reset monitoring are not yet implemented.
+The timing model targets event-driven simulators and is tested
 with `nvc`; no support for other simulator timing models is claimed.
 
 ## Development

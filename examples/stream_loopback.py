@@ -45,16 +45,14 @@ async def stream_loopback(dut: HierarchyObject) -> None:
 	await record_source.reset()
 	await record_sink.reset()
 
-	async def send_samples() -> None:
-		for i, q, last in ((-12, 34, False), (56, -78, True)):
-			await record_source.send(
-				{"i": LogicArray.from_signed(i, 16), "q": LogicArray.from_signed(q, 16)},
-				last=last,
-			)
-
-	sending_samples = cocotb.start_soon(send_samples())
-	for i, q, last in ((-12, 34, False), (56, -78, True)):
-		transfer = await record_sink.recv()
+	samples = [
+		{"i": LogicArray.from_signed(i, 16), "q": LogicArray.from_signed(q, 16)} for i, q in ((-12, 34), (56, -78))
+	]
+	sending_samples = cocotb.start_soon(record_source.send_frame(samples))
+	# No length bound by default. Pass max_transfers=... to set an optional cap;
+	# the enclosing cocotb test timeout still protects against stalled traffic.
+	frame = await record_sink.recv_frame()
+	for transfer, (i, q, last) in zip(frame, ((-12, 34, False), (56, -78, True)), strict=True):
 		assert isinstance(transfer.data, Mapping)
 		i_bits, q_bits = transfer.data["i"], transfer.data["q"]
 		assert isinstance(i_bits, LogicArray)

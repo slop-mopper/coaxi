@@ -2,11 +2,12 @@
 # SPDX-License-Identifier: CC0-1.0
 # This file was created by an AI model: openai/gpt-6.1-sol
 
-"""Single-transfer AXI-Stream endpoints for event-driven simulation."""
+"""Individual-transfer and frame AXI-Stream endpoints for event-driven simulation."""
 
 import logging
 from typing import cast, overload
 from dataclasses import dataclass
+from collections.abc import Sequence
 
 from cocotb.simtime import get_sim_time
 from cocotb.triggers import RisingEdge, FallingEdge, current_gpi_trigger
@@ -60,7 +61,7 @@ class _Endpoint[T]:
 		if not self._initialised or self._resetting:
 			raise EndpointStateError("await reset() before using this endpoint")
 		if self._active is not None:
-			raise EndpointStateError("only one transfer may be active on an endpoint")
+			raise EndpointStateError("only one operation may be active on an endpoint")
 		token = object()
 		self._active = token
 		return token
@@ -74,8 +75,10 @@ class _Endpoint[T]:
 		if not same_time or current_gpi_trigger() is not edge:
 			await edge
 
-	def _finish(self) -> None:
+	def _finish_beat(self) -> None:
 		self._completed_at = int(get_sim_time(unit="step"))
+
+	def _finish(self) -> None:
 		self._active = None
 
 	def _check(self, token: object) -> None:
@@ -123,7 +126,7 @@ class _Endpoint[T]:
 
 
 class AxiStreamSource[T = PayloadValue](_Endpoint[T]):
-	"""Drive single transfers with stable data/last during backpressure.
+	"""Drive individual transfers or frames, with stable data/last under backpressure.
 
 	``bus`` supplies the handles; ``clock`` is an exact name in its entity or
 	a handle. The clock must contain only literal 0/1 values from before the
@@ -133,7 +136,7 @@ class AxiStreamSource[T = PayloadValue](_Endpoint[T]):
 	implementation for application-specific values.
 
 	Await reset() before use. No background tasks or queues are started.
-	Only one send may be active. Falling-edge drives and pre-update rising-edge
+	Only one send or send_frame may be active. Falling-edge drives and pre-update rising-edge
 	sampling target event-driven simulators such as nvc. Immediately consecutive
 	awaits can reuse the cleanup edge and sustain one transfer per clock cycle
 	when the peer is ready. No low valid pulse is required between calls.
@@ -175,37 +178,75 @@ class AxiStreamSource[T = PayloadValue](_Endpoint[T]):
 			raise ValueError("a framed transfer requires last=True or last=False")
 		token = self._begin()
 		try:
-			await self._start_edge()
-			self._check(token)
-			self._payload.drive(data)
-			if self._bus.last is not None:
-				self._bus.last.set(int(bool(last)))
-			self._bus.valid.set(1)
-			while True:
-				await RisingEdge(self._clock)
-				self._check(token)
-				if _bit(self._bus.ready, "ready"):
-					break
-			_log.debug("sent transfer on %s, last=%s", self._bus.data._path, last)
-			await FallingEdge(self._clock)
-			self._check(token)
-			self._bus.valid.set(0)
-			if self._bus.last is not None:
-				self._bus.last.set(0)
+			await self._send_one(token, data, last)
 			self._finish()
 		except BaseException:
 			# No asynchronous cleanup: cancellation must be re-raised immediately.
 			self._abort(token)
 			raise
 
+	async def send_frame(self, data: Sequence[T]) -> None:
+		"""Send a non-empty sequence, generating last on its final transfer.
+
+		``data`` contains payloads, not AxiStreamTransfer objects. A bound last
+		signal is required. The sequence and its values remain caller-owned;
+		do not mutate either until this call finishes. Generators are not
+		accepted. Non-sequence/empty input or absent last fails before any
+		wire activity, without requiring reset.
+
+		Reserve the endpoint for the whole frame. Transfers use send's timing,
+		including full rate within and between immediately consecutive frames.
+		Return None at the final transfer's falling-edge cleanup.
+		Payloads are validated as they are driven, not all before transmission.
+		In-progress errors or cancellation require reset; an accepted prefix or
+		the entire frame may already have reached the peer. No rollback or retry
+		is performed, and local reset does not restore frame alignment.
+		"""
+		if self._bus.last is None:
+			raise ValueError("send_frame requires a bound last signal")
+		if not isinstance(data, Sequence):
+			raise TypeError("frame data must be a non-empty sequence")
+		count = len(data)
+		if count == 0:
+			raise ValueError("a frame must contain at least one transfer")
+		token = self._begin()
+		try:
+			for index in range(count):
+				await self._send_one(token, data[index], index == count - 1)
+			_log.debug("sent frame on %s, transfers=%s", self._bus.data._path, count)
+			self._finish()
+		except BaseException:
+			self._abort(token)
+			raise
+
+	async def _send_one(self, token: object, data: T, last: bool | None) -> None:
+		await self._start_edge()
+		self._check(token)
+		self._payload.drive(data)
+		if self._bus.last is not None:
+			self._bus.last.set(int(bool(last)))
+		self._bus.valid.set(1)
+		while True:
+			await RisingEdge(self._clock)
+			self._check(token)
+			if _bit(self._bus.ready, "ready"):
+				break
+		_log.debug("sent transfer on %s, last=%s", self._bus.data._path, last)
+		await FallingEdge(self._clock)
+		self._check(token)
+		self._bus.valid.set(0)
+		if self._bus.last is not None:
+			self._bus.last.set(0)
+		self._finish_beat()
+
 
 class AxiStreamSink[T = PayloadValue](_Endpoint[T]):
-	"""Accept single transfers; only an active recv call asserts ready.
+	"""Accept individual transfers or frames; only an active receive asserts ready.
 
 	``bus``, ``clock`` and optional ``payload`` have the source's meanings,
 	including its unmonitored, literal-0/1 clock precondition.
 	Await reset() before use. The sink owns only ready and never clears incoming
-	payloads. One recv may be active; no background tasks or queues are started.
+	payloads. One recv or recv_frame may be active; no background tasks or queues are started.
 	Immediately consecutive awaits can sustain one transfer per clock cycle;
 	ready need not pulse low between calls.
 	"""
@@ -238,22 +279,71 @@ class AxiStreamSink[T = PayloadValue](_Endpoint[T]):
 		"""
 		token = self._begin()
 		try:
-			await self._start_edge()
-			self._check(token)
-			self._bus.ready.set(1)
-			while True:
-				await RisingEdge(self._clock)
-				self._check(token)
-				if _bit(self._bus.valid, "valid"):
-					data = self._payload.read()
-					last = None if self._bus.last is None else _bit(self._bus.last, "last")
-					break
-			_log.debug("received transfer on %s, last=%s", self._bus.data._path, last)
-			await FallingEdge(self._clock)
-			self._check(token)
-			self._bus.ready.set(0)
+			transfer = await self._recv_one(token)
 			self._finish()
-			return AxiStreamTransfer(data, last)
+			return transfer
 		except BaseException:
 			self._abort(token)
 			raise
+
+	async def recv_frame(self, *, max_transfers: int | None = None) -> list[AxiStreamTransfer[T]]:
+		"""Collect transfers through the first accepted last=True, retaining last.
+
+		A bound last signal is required. ``max_transfers`` is an optional positive
+		integer count of accepted transfers; None (the default) collects without
+		a length bound. Invalid arguments fail before wire activity and do not
+		require reset. A frame ending exactly at the limit succeeds. If the
+		limit-th transfer lacks last, clear ready at its falling-edge cleanup,
+		then raise ValueError without accepting another transfer or draining.
+
+		Return a non-empty list of independent snapshots at the final cleanup.
+		Collection starts at the next accepted transfer; if earlier transfers
+		were consumed separately, this returns the remainder of that frame.
+		The whole call reserves the endpoint and preserves recv's full-rate
+		timing, including immediately consecutive frames.
+
+		Use a simulation-time timeout for stalled traffic. The default has no
+		memory bound if last never arrives. Length errors, in-progress failures
+		and cancellation require reset and return no partial list; accepted
+		traffic is not undone. Local reset does not restore frame alignment.
+		"""
+		if self._bus.last is None:
+			raise ValueError("recv_frame requires a bound last signal")
+		if max_transfers is not None:
+			if type(max_transfers) is not int:
+				raise TypeError("max_transfers must be a positive integer or None")
+			if max_transfers <= 0:
+				raise ValueError("max_transfers must be positive")
+		token = self._begin()
+		try:
+			transfers: list[AxiStreamTransfer[T]] = []
+			while True:
+				transfer = await self._recv_one(token)
+				transfers.append(transfer)
+				if transfer.last:
+					_log.debug("received frame on %s, transfers=%s", self._bus.data._path, len(transfers))
+					self._finish()
+					return transfers
+				if max_transfers is not None and len(transfers) >= max_transfers:
+					raise ValueError(f"frame did not end within max_transfers={max_transfers}; reset required")
+		except BaseException:
+			self._abort(token)
+			raise
+
+	async def _recv_one(self, token: object) -> AxiStreamTransfer[T]:
+		await self._start_edge()
+		self._check(token)
+		self._bus.ready.set(1)
+		while True:
+			await RisingEdge(self._clock)
+			self._check(token)
+			if _bit(self._bus.valid, "valid"):
+				data = self._payload.read()
+				last = None if self._bus.last is None else _bit(self._bus.last, "last")
+				break
+		_log.debug("received transfer on %s, last=%s", self._bus.data._path, last)
+		await FallingEdge(self._clock)
+		self._check(token)
+		self._bus.ready.set(0)
+		self._finish_beat()
+		return AxiStreamTransfer(data, last)

@@ -306,7 +306,7 @@ async def reset_and_busy(dut: HierarchyObject) -> None:
 	await sink.reset()
 	task = cocotb.start_soon(_capture(source.send("XU000001")))
 	await Timer(12, unit="ns")
-	with pytest.raises(EndpointStateError, match="one transfer"):
+	with pytest.raises(EndpointStateError, match="one operation"):
 		await source.send(1)
 	await source.reset()
 	assert isinstance(await task, TransferReset)
@@ -315,7 +315,7 @@ async def reset_and_busy(dut: HierarchyObject) -> None:
 	assert str(dut.plain_valid.value) == "0"
 	pending = cocotb.start_soon(_capture(sink.recv()))
 	await Timer(12, unit="ns")
-	with pytest.raises(EndpointStateError, match="one transfer"):
+	with pytest.raises(EndpointStateError, match="one operation"):
 		await sink.recv()
 	resetting = cocotb.start_soon(sink.reset())
 	await Timer(1, unit="ns")

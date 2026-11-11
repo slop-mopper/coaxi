@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: CC0-1.0
 # This file was created by an AI model: openai/gpt-6.1-sol
 
-"""Check endpoint constructor inference with Pyrefly's default configuration."""
+"""Check constructor and frame-method types with Pyrefly's default configuration."""
 
 import sys
 import subprocess
@@ -47,5 +47,42 @@ def test_constructor_types(tmp_path: Path, endpoint: str, scenario: str) -> None
 	if scenario == "missing":
 		assert result.returncode != 0, output
 		assert statement in output, output
+	else:
+		assert result.returncode == 0, output
+
+
+@pytest.mark.parametrize("scenario", ["default", "custom", "wrong_input"])
+def test_frame_types(tmp_path: Path, scenario: str) -> None:
+	"""Preserve generic payload and transfer-list types through the frame APIs."""
+	custom = scenario != "default"
+	value_type = "int" if custom else "PayloadValue"
+	adapter = ", payload=payload" if custom else ""
+	samples = '["wrong"]' if scenario == "wrong_input" else "[1, 2]"
+	source = tmp_path / "frame_typing_case.py"
+	source.write_text(
+		"# frame_typing_case.py\n"
+		"# SPDX-License-Identifier: CC0-1.0\n"
+		"# This file was created by an AI model: openai/gpt-6.1-sol\n"
+		"from typing import assert_type\n"
+		"from coaxi import AxiStreamSource, AxiStreamSink, AxiStreamTransfer, AxiStreamBus, Payload, PayloadValue\n"
+		"async def check(bus: AxiStreamBus, payload: Payload[int]) -> None:\n"
+		f"\tsource = AxiStreamSource(bus, 'clock'{adapter})\n"
+		f"\tsink = AxiStreamSink(bus, 'clock'{adapter})\n"
+		f"\tassert_type(await source.send_frame({samples}), None)\n"
+		f"\tassert_type(await sink.recv_frame(), list[AxiStreamTransfer[{value_type}]])\n"
+		f"\tassert_type(await sink.recv_frame(max_transfers=3), list[AxiStreamTransfer[{value_type}]])\n",
+		encoding="utf-8",
+	)
+	checker = Path(sys.executable).with_name("pyrefly")
+	config = Path(__file__).resolve().parents[1] / "pyproject.toml"
+	result = subprocess.run(
+		[str(checker), "check", "--config", str(config), str(source)],
+		capture_output=True,
+		text=True,
+		check=False,
+	)
+	output = result.stdout + result.stderr
+	if scenario == "wrong_input":
+		assert result.returncode != 0 and "send_frame" in output, output
 	else:
 		assert result.returncode == 0, output
