@@ -8,7 +8,8 @@ import logging
 from typing import cast, overload
 from dataclasses import dataclass
 
-from cocotb.triggers import RisingEdge, FallingEdge
+from cocotb.simtime import get_sim_time
+from cocotb.triggers import RisingEdge, FallingEdge, current_gpi_trigger
 
 from ._binding import Signal, _Control, AxiStreamBus
 from ._payload import Payload, HandlePayload, PayloadValue
@@ -53,6 +54,7 @@ class _Endpoint[T]:
 		self._initialised = False
 		self._resetting = False
 		self._active: object | None = None
+		self._completed_at: int | None = None
 
 	def _begin(self) -> object:
 		if not self._initialised or self._resetting:
@@ -63,6 +65,19 @@ class _Endpoint[T]:
 		self._active = token
 		return token
 
+	async def _start_edge(self) -> None:
+		# Only a successful preceding transfer can share its cleanup edge. Time
+		# alone is insufficient: ReadOnly/ReadWrite can occur in the same step.
+		edge = FallingEdge(self._clock)
+		same_time = self._completed_at == int(get_sim_time(unit="step"))
+		self._completed_at = None
+		if not same_time or current_gpi_trigger() is not edge:
+			await edge
+
+	def _finish(self) -> None:
+		self._completed_at = int(get_sim_time(unit="step"))
+		self._active = None
+
 	def _check(self, token: object) -> None:
 		if self._active is not token:
 			raise TransferReset("local reset interrupted this transfer; it may already have reached the DUT")
@@ -71,6 +86,7 @@ class _Endpoint[T]:
 		if self._active is token:
 			self._active = None
 			self._initialised = False
+			self._completed_at = None
 
 	def _clear(self) -> None:
 		raise NotImplementedError
@@ -78,9 +94,11 @@ class _Endpoint[T]:
 	async def reset(self) -> None:
 		"""Invalidate pending work, then restore owned outputs at a falling edge.
 
-		Start the clock before awaiting this method. Source reset clears valid,
-		payload and last; sink reset clears ready. Call initially and after any
-		failed or cancelled transfer. Overlapping resets are rejected.
+		Start the clock before awaiting this method. It must contain only literal
+		0/1 values from before the first reset onwards; invalid clock values are
+		not monitored. Source reset clears valid, payload and last; sink reset
+		clears ready. Call initially and after any failed or cancelled transfer.
+		Overlapping resets are rejected.
 
 		This is destructive local recovery, not a DUT reset or a reset-pin
 		monitor. Coordinate it with the DUT's reset during active traffic.
@@ -94,6 +112,7 @@ class _Endpoint[T]:
 		self._resetting = True
 		self._initialised = False
 		self._active = None
+		self._completed_at = None
 		try:
 			await FallingEdge(self._clock)
 			self._clear()
@@ -107,13 +126,17 @@ class AxiStreamSource[T = PayloadValue](_Endpoint[T]):
 	"""Drive single transfers with stable data/last during backpressure.
 
 	``bus`` supplies the handles; ``clock`` is an exact name in its entity or
-	a handle. ``payload`` defaults to HandlePayload (T = PayloadValue); pass a
-	Payload[T] implementation for application-specific values.
+	a handle. The clock must contain only literal 0/1 values from before the
+	first reset onwards, including while idle. Weak L/H and unresolved clocks
+	are unsupported; this caller precondition is not monitored.
+	``payload`` defaults to HandlePayload (T = PayloadValue); pass a Payload[T]
+	implementation for application-specific values.
 
 	Await reset() before use. No background tasks or queues are started.
 	Only one send may be active. Falling-edge drives and pre-update rising-edge
-	sampling target event-driven simulators such as nvc. Calls can introduce
-	idle cycles; full-rate throughput is not promised.
+	sampling target event-driven simulators such as nvc. Immediately consecutive
+	awaits can reuse the cleanup edge and sustain one transfer per clock cycle
+	when the peer is ready. No low valid pulse is required between calls.
 	"""
 
 	@overload
@@ -138,9 +161,12 @@ class AxiStreamSource[T = PayloadValue](_Endpoint[T]):
 
 		``data`` is owned by the caller but must not be mutated until this call
 		finishes. ``last`` must be an explicit bool on a framed bus and None on
-		an unframed bus. This method returns after wire cleanup, not at the
-		accepting edge. Errors/cancellation require reset; a transfer may already
-		have been accepted, so automatic retry can duplicate data.
+		an unframed bus. This method schedules cleanup at the following falling
+		edge and returns there, not at acceptance. An immediately following send
+		can drive its next value on that same edge, superseding valid's clearing
+		write. A simulator-phase or time wait between calls can insert idle cycles.
+		Errors/cancellation require reset; a transfer may already have been
+		accepted, so automatic retry can duplicate data.
 		"""
 		if self._bus.last is None:
 			if last is not None:
@@ -149,7 +175,7 @@ class AxiStreamSource[T = PayloadValue](_Endpoint[T]):
 			raise ValueError("a framed transfer requires last=True or last=False")
 		token = self._begin()
 		try:
-			await FallingEdge(self._clock)
+			await self._start_edge()
 			self._check(token)
 			self._payload.drive(data)
 			if self._bus.last is not None:
@@ -166,7 +192,7 @@ class AxiStreamSource[T = PayloadValue](_Endpoint[T]):
 			self._bus.valid.set(0)
 			if self._bus.last is not None:
 				self._bus.last.set(0)
-			self._active = None
+			self._finish()
 		except BaseException:
 			# No asynchronous cleanup: cancellation must be re-raised immediately.
 			self._abort(token)
@@ -176,9 +202,12 @@ class AxiStreamSource[T = PayloadValue](_Endpoint[T]):
 class AxiStreamSink[T = PayloadValue](_Endpoint[T]):
 	"""Accept single transfers; only an active recv call asserts ready.
 
-	``bus``, ``clock`` and optional ``payload`` have the source's meanings.
+	``bus``, ``clock`` and optional ``payload`` have the source's meanings,
+	including its unmonitored, literal-0/1 clock precondition.
 	Await reset() before use. The sink owns only ready and never clears incoming
 	payloads. One recv may be active; no background tasks or queues are started.
+	Immediately consecutive awaits can sustain one transfer per clock cycle;
+	ready need not pulse low between calls.
 	"""
 
 	@overload
@@ -201,13 +230,15 @@ class AxiStreamSink[T = PayloadValue](_Endpoint[T]):
 		Sample data/last immediately at the rising edge, before clocked HDL
 		updates; do not wait for ReadOnly. Payload meta-values are preserved.
 		Valid and accepted last must be exactly 0 or 1 (weak L/H also fail).
-		Absent last produces None. Return after the following falling-edge
-		cleanup. Errors and cancellation require reset; accepted data is not
-		rolled back. No other optional sidebands are needed.
+		Absent last produces None. Schedule cleanup and return at the following
+		falling edge. An immediately following recv can reassert ready on that
+		same edge, without a low pulse; simulator-phase or time waits between
+		calls can insert idle cycles. Errors and cancellation require reset;
+		accepted data is not rolled back. No other optional sidebands are needed.
 		"""
 		token = self._begin()
 		try:
-			await FallingEdge(self._clock)
+			await self._start_edge()
 			self._check(token)
 			self._bus.ready.set(1)
 			while True:
@@ -221,7 +252,7 @@ class AxiStreamSink[T = PayloadValue](_Endpoint[T]):
 			await FallingEdge(self._clock)
 			self._check(token)
 			self._bus.ready.set(0)
-			self._active = None
+			self._finish()
 			return AxiStreamTransfer(data, last)
 		except BaseException:
 			self._abort(token)

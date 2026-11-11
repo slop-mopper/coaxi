@@ -64,6 +64,16 @@ and their trade-offs. Do not invent requirements or silently settle the choice.
   higher-level frame helpers.
 - Document which optional signals an operation needs. Do not silently assume
   that every interface has every AXI-Stream sideband signal.
+- Full-rate transfers are critical: sustain one accepted transfer per rising
+  clock edge with immediately consecutive calls when data and ready are
+  available. Verify cycle spacing and recovery from backpressure in tests.
+
+### Clocks
+
+- Require every clock to contain only literal 0/1 values from before the first
+  endpoint reset onwards. Weak L/H and unresolved clock values are unsupported.
+- Document this as a caller precondition. The current endpoints do not monitor
+  clocks for invalid values.
 
 ### Meta-values and reset
 

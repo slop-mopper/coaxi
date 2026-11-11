@@ -11,12 +11,12 @@ from cocotb_tools.runner import get_runner
 
 
 @pytest.mark.parametrize("trust_inertial", ["0", "1"])
-@pytest.mark.parametrize("suite", ["regression", "example"])
+@pytest.mark.parametrize("suite", ["regression", "full_rate", "example"])
 def test_stream_simulation(tmp_path: Path, trust_inertial: str, suite: str) -> None:
 	"""Build in tmp_path and run suite with the selected write mode."""
 	tests = Path(__file__).parent.resolve()
-	test_module = "stream_cases" if suite == "regression" else "stream_loopback"
-	test_dir = tests if suite == "regression" else tests.parent / "examples"
+	test_module = {"regression": "stream_cases", "full_rate": "full_rate_cases", "example": "stream_loopback"}[suite]
+	test_dir = tests.parent / "examples" if suite == "example" else tests
 	runner = get_runner("nvc")
 	runner.build(
 		sources=[tests / "hdl" / "stream_dut.vhd"],

@@ -44,8 +44,14 @@ such as `samples_valid`. Last is absent unless explicitly selected with
 
 ## Sending and receiving
 
-Start the clock before awaiting either endpoint's initial `reset()`. The following
-bounded cocotb test uses an otherwise undriven, unframed stream in the example DUT:
+Start the clock before awaiting either endpoint's initial `reset()`. Every clock
+must contain only literal 0/1 values from before the first endpoint reset onwards;
+weak L/H and X/U/Z/etc. clock values are unsupported. This is a caller precondition:
+endpoints do not monitor clocks for invalid values. Cocotb's raw edge triggers
+can differ from VHDL `rising_edge`/`falling_edge` for non-0/1 values.
+
+The following bounded cocotb test uses an otherwise undriven, unframed stream in
+the example DUT:
 
 ```python
 import cocotb
@@ -85,16 +91,46 @@ framed IQ-record transfers. It runs against
 `send(data, last=...)` holds data and last stable until ready is sampled high.
 `recv()` asserts ready while waiting for valid and returns an
 `AxiStreamTransfer` with `data` and `last`. Values are sampled at rising edges,
-before clocked HDL updates. Both calls return after clearing their handshake
-output at the following falling edge, rather than at the accepting
-rising edge. The source owns data, valid and last; the sink owns ready.
+before clocked HDL updates. Both calls schedule handshake cleanup and return at
+the following falling edge, rather than at the accepting rising edge. The source
+owns data, valid and last; the sink owns ready.
 
 Each endpoint allows one active operation. There are no background queues.
 Start send/receive concurrently when the peer needs both operations to progress;
-awaiting send before starting a same-bus receive would stall. Calls may introduce
-idle cycles, and full-rate throughput is not promised. Each operation needs a
-running clock and a cooperating peer; use a bounded cocotb test or a
+awaiting send before starting a same-bus receive would stall. Each operation needs
+a running clock and a cooperating peer; use a bounded cocotb test or a
 simulation-time timeout to detect stalled traffic.
+
+### Full-rate transfers
+
+Immediately consecutive calls can sustain **one accepted transfer per rising
+clock edge** whenever data and ready are available:
+
+```python
+# Run these in separate coroutines so both endpoints can progress.
+async def send_samples() -> None:
+	for sample in samples:
+		await source.send(sample)  # Supply last explicitly on a framed bus.
+
+
+async def receive_samples() -> None:
+	for _ in samples:
+		transfer = await sink.recv()
+		# Process this independent snapshot without a simulator-phase/time wait.
+```
+
+The next call reuses the preceding call's falling-edge cleanup point to drive
+the next payload or reassert ready. Valid and ready may remain continuously high;
+there is no promised low pulse or settled-low state between calls. Data and last
+remain stable throughout backpressure. Frame boundaries do not require idle
+cycles. The final call still schedules deassertion at its cleanup edge.
+
+To sustain full rate, use separate sending/receiving coroutines and start each
+next call immediately, without advancing simulation time or awaiting a different
+simulator phase. `ReadOnly()`, `ReadWrite()` or a delay between calls can introduce
+idle cycles: the next call then waits for a fresh falling edge before driving.
+Initial reset and the first transfer also wait for their own falling edges.
+Normal Python processing without a simulator wait does not consume a clock cycle.
 
 ## Framing and payloads
 

@@ -27,8 +27,14 @@ automatic reset-pin monitoring are not implemented.
 - `_stream.py` provides `AxiStreamSource`, `AxiStreamSink` and
   `AxiStreamTransfer[T]`. An endpoint permits one active transfer and has no
   background queue. Drives occur at falling edges; transfer values are sampled
-  at rising edges before clocked HDL updates. Completion includes falling-edge
-  cleanup. This initial API does not promise full-rate throughput.
+  at rising edges before clocked HDL updates. Completion schedules cleanup at
+  the following falling edge. Immediately consecutive calls reuse that edge
+  to sustain one accepted transfer per rising edge when data and ready permit.
+  Reuse requires both the recorded completion time (in simulator steps) and
+  `current_gpi_trigger()` to identify that clock's falling-edge callback.
+  Other simulator phases, later times, reset and failures invalidate reuse.
+  Cleanup writes can be superseded on the same edge; valid/ready need not pulse
+  low between calls. Initial calls still wait for a fresh falling edge.
 
 The source owns data, valid and last; the sink owns ready. Explicit `reset()`
 invalidates pending work and clears owned outputs at a falling edge. Failed or
@@ -37,6 +43,12 @@ already accepted by the DUT and must be coordinated with DUT reset. Spawned
 transfer coroutines must catch `TransferReset` internally when reset may
 interrupt them; cocotb can fail a test on an unobserved task exception before a
 later await observes it.
+
+Every clock must contain only literal 0/1 values from before the first endpoint
+reset onwards. Weak L/H and unresolved clock values are unsupported. This is a
+caller precondition, without runtime clock monitoring. The endpoints use
+cocotb's raw rising/falling-edge triggers, whose behaviour for non-0/1 clocks
+can differ from VHDL `rising_edge`/`falling_edge`.
 
 Payload meta-values are preserved. Sampled handshake controls and accepted last
 must be exactly 0 or 1. Explicit numeric helpers reject unresolved values even
@@ -74,6 +86,12 @@ a caller's name.
   cases include interruption between acceptance and cleanup, cancellation of
   reset, and injected adapter drive/read/clear failures. DUT counters verify
   that interruption does not undo a previously accepted transfer.
+- `tests/full_rate_cases.py` measures acceptance cycle spacing through the
+  registered DUT and on direct vector/record buses, including custom adapters.
+  Independent peers check backpressure stability and continuous ready across
+  source gaps; other cases check simulator-phase/time guards and chained
+  failures. Interrupted full-rate receives cover adapter failure, cancellation
+  and local reset after acceptance, preserving the DUT's buffered next value.
 - `tests/hdl/stream_dut.vhd` is the VHDL-2008 DUT, including a registered stream
   path and a two-field signed IQ record.
 - `examples/stream_loopback.py` is a bounded cocotb usage example for unframed
