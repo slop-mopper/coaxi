@@ -18,11 +18,22 @@ within this library.
 
 ### Signal names
 
-- Support both standard AXI-Stream names such as `foo_tvalid` and `foo_tready`,
-  and names such as `foo_valid` and `foo_ready`.
-- An explicit option to include or omit the `t` prefix is sufficient. Apply it
-  consistently to the relevant signals.
-- Avoid assumptions about signal names beyond the documented binding options.
+- Do not require any HDL signal naming convention. Treat protocol roles such as
+  data, valid, ready, and last independently of the signals' actual names.
+- Provide convenient defaults for standard AXI-Stream names such as
+  `foo_tvalid` and `foo_tready`, and for names such as `foo_valid` and `foo_ready`.
+  Prefix and `t`-prefix options are conveniences only.
+- Let callers override every signal independently with an arbitrary HDL name
+  or an already-bound cocotb handle. This includes optional sidebands and any
+  clock or reset signals accepted by an API.
+- Make overrides straightforward through per-signal arguments or a mapping.
+  Overriding one signal must not require restating the others, subclassing,
+  writing an adapter, or renaming signals in the DUT.
+- Use explicit names exactly as supplied. Do not add prefixes or suffixes,
+  change case, or require a shared naming pattern. Accept HDL names supported
+  by cocotb even when they are not valid Python attribute names.
+- Keep optional-signal selection explicit; naming defaults must not require
+  optional signals to exist.
 
 ### Data types
 
@@ -117,9 +128,11 @@ VHDL, while retaining the same header text.
 
 - Use `nvc` as the simulator. It is installed in the development environment.
 - Write any required HDL DUTs in VHDL-2008.
-- Test the supported naming styles, framed and unframed transfers, custom data
-  types, meta-values, reset behaviour, and backpressure as the relevant features
-  are implemented.
+- Test default naming styles, arbitrary unrelated signal names, individual
+  overrides mixed with defaults, and direct handle binding as signal binding
+  is implemented.
+- Test framed and unframed transfers, custom data types, meta-values, reset
+  behaviour, and backpressure as the relevant features are implemented.
 
 ## Architecture and commits
 
