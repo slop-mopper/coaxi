@@ -64,8 +64,9 @@ source = AxiStreamSource(bus, clock="beat_clock")
 ```
 
 Explicit names are used unchanged. Use `t_prefix=False` for generated names
-such as `samples_valid`. Last is absent unless explicitly selected with
-`last=True`, a name or a handle. This initial subset requires ready.
+such as `samples_valid`. Last and the other sidebands are absent unless
+explicitly selected with `True`, a name or a handle. This subset still requires
+data and ready. No sidebands need to be selected for bare-bones usage.
 
 ## Sending and receiving
 
@@ -118,7 +119,7 @@ framed IQ-record transfers. It runs against
 `AxiStreamTransfer` with `data` and `last`. Values are sampled at rising edges,
 before clocked HDL updates. Both calls schedule handshake cleanup and return at
 the following falling edge, rather than at the accepting rising edge. The source
-owns data, valid and last; the sink owns ready.
+owns data, valid, last and all bound sidebands; the sink owns ready.
 
 Each endpoint allows one active operation. There are no background queues.
 Start send/receive concurrently when the peer needs both operations to progress;
@@ -184,28 +185,35 @@ await sending
 assert [transfer.last for transfer in frame] == [False, True]
 ```
 
-`send_frame(data)` takes a finite `Sequence[T]`, such as a list or tuple, and
+`send_frame(data, *, sidebands=None)` takes a finite `Sequence[T]`, such as a list or tuple, and
 generates `last=False` on all but the final transfer. Input elements are payloads,
 not transfer objects. Generators and empty sequences are rejected. The sequence
 and its payloads remain caller-owned: do not mutate them until the call finishes.
 Payloads are validated as they are driven; a later invalid payload can fail after
 an earlier prefix has been accepted. Arbitrary custom values are not deep-copied.
 
-`recv_frame(*, max_transfers=None)` collects through the first accepted
-`last=True`, retaining every payload snapshot and sampled last. The default has
-**no length or memory bound**. An optional positive integer `max_transfers`
-limits accepted transfers, not elapsed cycles:
+`recv_frame(*, max_transfers=None)` assembles packets separately by `(id, dest)`,
+returning the next completed packet and retaining other streams' unfinished
+packets for later calls. Packet completion order can differ from start order.
+Absent id/dest have effective value zero, so the usual single-stream behaviour
+is unchanged. All payloads and sidebands are independent snapshots.
+The default has **no length or memory bound**. An optional positive integer
+`max_transfers` limits each packet's length, not elapsed cycles or total traffic
+across interleaved streams:
 
 ```python
 frame = await sink.recv_frame(max_transfers=1024)
 ```
 
-Last on the limit-th transfer succeeds. If that transfer has no last, the helper
-clears ready at its falling-edge cleanup and raises `ValueError`, without
+Last on the packet's limit-th transfer succeeds. If that transfer has no last,
+the helper clears ready at its falling-edge cleanup and raises `ValueError`, without
 accepting another transfer, returning a partial frame, draining or retrying.
 Reset is then required. Both an unlimited receive and a length-limited receive
 need a simulation-time timeout for stalled traffic; a missing last with the
-default limit can also grow memory without bound.
+default limit can also grow memory without bound. The limit applies to retained
+prefixes too: selecting a limit already reached by a retained unfinished packet
+raises before accepting more data. There is no bound on the number of unfinished
+streams. Reset, cancellation and in-progress failures discard partial assembly.
 
 Both helpers require last. Absent last, empty/non-sequence send input and invalid
 limits are rejected before wire activity and do not themselves require reset.
@@ -220,6 +228,81 @@ In-progress failures, cancellation or reset can leave an accepted prefix or even
 an entire frame on the peer. There is no rollback or automatic retry. Local reset
 restores owned outputs but **does not restore frame alignment**; coordinated
 recovery with the peer or DUT may be necessary.
+
+### Optional AXI4-Stream sidebands
+
+The basic API stays unchanged:
+
+```python
+bus = AxiStreamBus.bind(dut, prefix="samples")
+source = AxiStreamSource(bus, clock="clock")
+# After reset, with a cooperating peer:
+await source.send(42)
+```
+
+Opt in only to the signals on your interface. Each role has the same exact-name,
+direct-handle and mixed-default binding support as data/valid/ready:
+
+```python
+from coaxi import AxiStreamSidebands
+
+bus = AxiStreamBus.bind(dut, prefix="samples", last=True, keep=True, user="flags")
+source = AxiStreamSource(bus, clock="clock")
+# After reset, with a cooperating peer:
+await source.send(0x1234, last=True, sidebands=AxiStreamSidebands(keep=1, user=5))
+```
+
+`sidebands` is optional even when signals are bound. For every transfer the source
+defaults keep to all ones, strb to effective keep, and user/id/dest to zero. Values
+from the previous transfer do not become defaults. Supplying metadata for an
+unbound signal raises before an individual send changes the wires.
+Unsigned integers must fit the selected width; strings and cocotb logic values
+must match it. Deliberate X/U/etc. are retained for propagation/fault-injection
+tests, with no implicit conversion or claim that the traffic is protocol-valid.
+
+`AxiStreamTransfer` adds `keep`, `strb`, `user`, `id` and `dest` snapshots. Each is
+a cocotb `Logic`/`LogicArray` when physically bound, or **None when absent**.
+This distinguishes absence from an explicit zero. For protocol interpretation,
+absent keep means all bytes present, absent strb follows effective keep, and
+absent id/dest/user have value zero. Absent last remains None; this library does
+not silently impose a packet-boundary policy on an interface without last.
+`recv()` always returns individual transfers in wire order, including raw
+meta-valued identifiers. Packet assembly requires literal 0/1 id/dest values;
+it raises `ProtocolValueError` rather than guessing a stream for X/U/weak values.
+When mixing APIs, a raw receive discards any retained prefix for its stream;
+a raw unresolved identity discards all retained prefixes. This prevents later
+assembly from splicing across a raw-consumed beat or packet boundary. Other
+streams' retained prefixes are unaffected when the identity is known.
+
+Keep and strb require a **byte-aligned logic-vector payload**, with exactly one
+qualifier bit per byte. Scalar and record/custom HDL payloads have no inferred
+byte layout and reject these qualifiers. A custom Python adapter over a vector
+can still use its physical byte lanes. The rightmost qualifier bit describes
+the least-significant data byte, regardless of the HDL index bounds/direction.
+User/id/dest do not require a byte layout and work with record payloads too.
+The standard's data-less qualifier case is not implemented yet.
+
+The keep/strb pairs per lane distinguish data (`1/1`), position (`1/0`) and null
+(`0/0`) bytes. Literal `0/1` is reserved: the source rejects it before driving
+and the sink raises `ProtocolValueError` after sampling it at an accepting edge.
+Unresolved qualifiers are preserved without claiming that the pair is valid.
+No bytes or final null transfers are discarded, packed, padded or reordered.
+
+For per-transfer frame metadata, supply a sequence matching the payload count:
+
+```python
+metadata = [
+	AxiStreamSidebands(keep=3, user=1, id=7),
+	AxiStreamSidebands(keep=1, user=2, id=7),
+]
+await source.send_frame([0x1234, 0x0056], sidebands=metadata)
+```
+
+Keep/strb/user may vary within a packet; id/dest must remain constant.
+A later invalid entry can fail after a prefix has already been accepted, requiring
+reset. Use individual `send()` calls to deliberately interleave different streams.
+The existing `send_frame`/`recv_frame` names denote a packet ending in last; the
+AXI4-Stream specification also uses “frame” for application groupings of packets.
 
 ### Payloads
 
@@ -261,8 +344,9 @@ passed to `send` or `send_frame` until that call finishes.
 
 Always await `reset()` initially and after an in-progress operation fails or is
 cancelled, including frame length errors. Preflight argument errors are exempt.
-Source reset clears valid, last and all owned payload leaves; sink reset clears
-ready. Outputs clear at a falling edge, so reset also needs a running clock.
+Source reset clears valid, last, every bound sideband and all owned payload
+leaves; sink reset clears ready and retained partial packet assembly.
+Outputs clear at a falling edge, so reset also needs a running clock.
 A failed or cancelled reset leaves the endpoint unusable until reset succeeds.
 Reset is explicit local recovery; there is no automatic reset-pin monitoring.
 
@@ -284,9 +368,12 @@ DUT or discard its buffered transfers.
 
 ## Current scope
 
-The implemented subset requires ready and optionally supports last. Frame helpers
-require last; unframed traffic uses individual transfers. Other AXI-Stream
-sidebands and automatic reset monitoring are not yet implemented.
+The target is **AXI4-Stream**, excluding AXI5-Stream wake-up/parity extensions.
+The implemented subset currently requires data and ready, with explicit optional
+last/keep/strb/user/id/dest and interleaved packet assembly. Frame helpers require
+last; unframed traffic uses individual transfers. Permitted data/ready omissions,
+continuous queued reception without ready, and automatic protocol reset-pin
+monitoring remain to be implemented. This is not yet full-standard support.
 The timing model targets event-driven simulators and is tested
 with `nvc`; no support for other simulator timing models is claimed.
 

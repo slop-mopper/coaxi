@@ -64,13 +64,17 @@ def test_frame_types(tmp_path: Path, scenario: str) -> None:
 		"# SPDX-License-Identifier: CC0-1.0\n"
 		"# This file was created by an AI model: openai/gpt-6.1-sol\n"
 		"from typing import assert_type\n"
-		"from coaxi import AxiStreamSource, AxiStreamSink, AxiStreamTransfer, AxiStreamBus, Payload, PayloadValue\n"
+		"from cocotb.types import Logic, LogicArray\n"
+		"from coaxi import AxiStreamSource, AxiStreamSink, AxiStreamTransfer, AxiStreamBus, Payload, PayloadValue, AxiStreamSidebands\n"
 		"async def check(bus: AxiStreamBus, payload: Payload[int]) -> None:\n"
 		f"\tsource = AxiStreamSource(bus, 'clock'{adapter})\n"
 		f"\tsink = AxiStreamSink(bus, 'clock'{adapter})\n"
 		f"\tassert_type(await source.send_frame({samples}), None)\n"
 		f"\tassert_type(await sink.recv_frame(), list[AxiStreamTransfer[{value_type}]])\n"
-		f"\tassert_type(await sink.recv_frame(max_transfers=3), list[AxiStreamTransfer[{value_type}]])\n",
+		f"\tassert_type(await sink.recv_frame(max_transfers=3), list[AxiStreamTransfer[{value_type}]])\n"
+		f"\tassert_type(await source.send_frame({samples}, sidebands=[AxiStreamSidebands(user=3)]), None)\n"
+		"\tassert_type((await sink.recv()).keep, Logic | LogicArray | None)\n"
+		"\tassert_type((await sink.recv()).id, Logic | LogicArray | None)\n",
 		encoding="utf-8",
 	)
 	checker = Path(sys.executable).with_name("pyrefly")

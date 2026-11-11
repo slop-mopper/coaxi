@@ -9,17 +9,19 @@ from typing import cast, overload
 from dataclasses import dataclass
 from collections.abc import Sequence
 
+from cocotb.types import Logic, LogicArray
 from cocotb.simtime import get_sim_time
 from cocotb.triggers import RisingEdge, FallingEdge, current_gpi_trigger
 
 from ._binding import Signal, _Control, AxiStreamBus
 from ._payload import Payload, HandlePayload, PayloadValue
+from ._sideband import _Values, _identity, _SidebandAccess, AxiStreamSidebands
 
 _log = logging.getLogger("coaxi.stream")
 
 
 class ProtocolValueError(ValueError):
-	"""A sampled valid, ready or accepted last value is not exactly 0 or 1."""
+	"""An accepted control, byte-qualifier pair or packet assembly key is invalid."""
 
 
 class EndpointStateError(RuntimeError):
@@ -32,12 +34,28 @@ class TransferReset(RuntimeError):
 
 @dataclass(frozen=True)
 class AxiStreamTransfer[T]:
-	"""One accepted transfer: independent data snapshot and optional last value."""
+	"""One accepted transfer, with independent payload and raw sideband snapshots.
+
+	None denotes a physically absent signal, rather than its protocol default.
+	Absent keep means all bytes present, absent strb follows effective keep,
+	and absent user/id/dest have effective value zero. No byte compaction or
+	application-specific interpretation is performed.
+	"""
 
 	data: T
 	"""Payload captured at the accepting rising edge."""
 	last: bool | None
 	"""Sampled frame boundary, or None when no last signal is bound."""
+	keep: Logic | LogicArray | None = None
+	"""Raw byte-presence mask, or None when absent."""
+	strb: Logic | LogicArray | None = None
+	"""Raw data/position-byte mask, or None when absent."""
+	user: Logic | LogicArray | None = None
+	"""Raw application-defined metadata, or None when absent."""
+	id: Logic | LogicArray | None = None
+	"""Raw stream identifier, or None when absent."""
+	dest: Logic | LogicArray | None = None
+	"""Raw routing destination, or None when absent."""
 
 
 def _bit(handle: _Control, role: str) -> bool:
@@ -52,6 +70,7 @@ class _Endpoint[T]:
 		self._bus = bus
 		self._clock = bus.resolve_clock(clock)
 		self._payload = payload if payload is not None else cast(Payload[T], HandlePayload(bus.data))
+		self._sidebands = _SidebandAccess(bus)
 		self._initialised = False
 		self._resetting = False
 		self._active: object | None = None
@@ -100,7 +119,8 @@ class _Endpoint[T]:
 		Start the clock before awaiting this method. It must contain only literal
 		0/1 values from before the first reset onwards; invalid clock values are
 		not monitored. Source reset clears valid, payload and last; sink reset
-		clears ready. Call initially and after any failed or cancelled transfer.
+		clears ready and partial packet assembly. Source reset also clears every
+		bound sideband. Call initially and after failed or cancelled transfers.
 		Overlapping resets are rejected.
 
 		This is destructive local recovery, not a DUT reset or a reset-pin
@@ -158,8 +178,9 @@ class AxiStreamSource[T = PayloadValue](_Endpoint[T]):
 		if self._bus.last is not None:
 			self._bus.last.set(0)
 		self._payload.clear()
+		self._sidebands.clear()
 
-	async def send(self, data: T, *, last: bool | None = None) -> None:
+	async def send(self, data: T, *, last: bool | None = None, sidebands: AxiStreamSidebands | None = None) -> None:
 		"""Drive data until accepted, then clear valid at the next falling edge.
 
 		``data`` is owned by the caller but must not be mutated until this call
@@ -168,6 +189,10 @@ class AxiStreamSource[T = PayloadValue](_Endpoint[T]):
 		edge and returns there, not at acceptance. An immediately following send
 		can drive its next value on that same edge, superseding valid's clearing
 		write. A simulator-phase or time wait between calls can insert idle cycles.
+		``sidebands`` optionally supplies metadata, independently of data.
+		Omitting it selects keep=all ones, strb=effective keep and user/id/dest=0
+		on bound signals. All sidebands remain stable during backpressure.
+		Invalid metadata fails before wire activity without requiring reset.
 		Errors/cancellation require reset; a transfer may already have been
 		accepted, so automatic retry can duplicate data.
 		"""
@@ -176,23 +201,29 @@ class AxiStreamSource[T = PayloadValue](_Endpoint[T]):
 				raise ValueError("last requires a bound last signal")
 		elif type(last) is not bool:
 			raise ValueError("a framed transfer requires last=True or last=False")
+		metadata = self._sidebands.prepare(sidebands)
 		token = self._begin()
 		try:
-			await self._send_one(token, data, last)
+			await self._send_one(token, data, last, metadata)
 			self._finish()
 		except BaseException:
 			# No asynchronous cleanup: cancellation must be re-raised immediately.
 			self._abort(token)
 			raise
 
-	async def send_frame(self, data: Sequence[T]) -> None:
+	async def send_frame(self, data: Sequence[T], *, sidebands: Sequence[AxiStreamSidebands] | None = None) -> None:
 		"""Send a non-empty sequence, generating last on its final transfer.
 
 		``data`` contains payloads, not AxiStreamTransfer objects. A bound last
 		signal is required. The sequence and its values remain caller-owned;
 		do not mutate either until this call finishes. Generators are not
-		accepted. Non-sequence/empty input or absent last fails before any
-		wire activity, without requiring reset.
+		accepted. ``sidebands`` is an optional parallel sequence, with exactly
+		one AxiStreamSidebands per payload. Omit it for default values on every
+		beat. A packet keeps a constant effective (id, dest); use individual
+		send calls to interleave different packets. Packet helpers require
+		literal 0/1 identifiers; individual transfers retain meta-values.
+		Non-sequence/empty input, metadata length mismatch or absent last fails
+		before any wire activity, without requiring reset.
 
 		Reserve the endpoint for the whole frame. Transfers use send's timing,
 		including full rate within and between immediately consecutive frames.
@@ -209,20 +240,32 @@ class AxiStreamSource[T = PayloadValue](_Endpoint[T]):
 		count = len(data)
 		if count == 0:
 			raise ValueError("a frame must contain at least one transfer")
+		if sidebands is not None:
+			if not isinstance(sidebands, Sequence):
+				raise TypeError("frame sidebands must be a sequence or None")
+			if len(sidebands) != count:
+				raise ValueError("frame sidebands must have one entry per payload")
 		token = self._begin()
 		try:
+			identity = None
 			for index in range(count):
-				await self._send_one(token, data[index], index == count - 1)
+				metadata = self._sidebands.prepare(None if sidebands is None else sidebands[index])
+				key = _identity(metadata.get("id"), metadata.get("dest"))
+				if identity is not None and key != identity:
+					raise ValueError("send_frame requires a constant effective (id, dest)")
+				identity = key
+				await self._send_one(token, data[index], index == count - 1, metadata)
 			_log.debug("sent frame on %s, transfers=%s", self._bus.data._path, count)
 			self._finish()
 		except BaseException:
 			self._abort(token)
 			raise
 
-	async def _send_one(self, token: object, data: T, last: bool | None) -> None:
+	async def _send_one(self, token: object, data: T, last: bool | None, metadata: _Values) -> None:
 		await self._start_edge()
 		self._check(token)
 		self._payload.drive(data)
+		self._sidebands.drive(metadata)
 		if self._bus.last is not None:
 			self._bus.last.set(int(bool(last)))
 		self._bus.valid.set(1)
@@ -261,9 +304,16 @@ class AxiStreamSink[T = PayloadValue](_Endpoint[T]):
 
 	def __init__(self, bus: AxiStreamBus, clock: Signal, *, payload: Payload[T] | None = None) -> None:
 		super().__init__(bus, clock, payload)
+		self._packets: dict[tuple[int, int], list[AxiStreamTransfer[T]]] = {}
+
+	def _abort(self, token: object) -> None:
+		if self._active is token:
+			self._packets.clear()
+		super()._abort(token)
 
 	def _clear(self) -> None:
 		self._bus.ready.set(0)
+		self._packets.clear()
 
 	async def recv(self) -> AxiStreamTransfer[T]:
 		"""Assert ready, capture one accepted transfer, clear ready, then return.
@@ -275,11 +325,24 @@ class AxiStreamSink[T = PayloadValue](_Endpoint[T]):
 		falling edge. An immediately following recv can reassert ready on that
 		same edge, without a low pulse; simulator-phase or time waits between
 		calls can insert idle cycles. Errors and cancellation require reset;
-		accepted data is not rolled back. No other optional sidebands are needed.
+		accepted data is not rolled back. Bound sidebands are captured at that
+		same accepting edge; absent signals remain None. Literal keep=0/strb=1
+		lane pairs raise ProtocolValueError after acceptance. Meta-valued
+		sidebands are preserved, without proving their protocol validity.
+		No other optional sidebands are needed. Return individual transfers in
+		wire order. Discard any retained prefix for this transfer's identity,
+		so packet assembly cannot splice across a raw-consumed beat. If the
+		identity is unresolved, discard all retained prefixes conservatively.
 		"""
 		token = self._begin()
 		try:
 			transfer = await self._recv_one(token)
+			try:
+				key = _identity(transfer.id, transfer.dest)
+			except ValueError:
+				self._packets.clear()
+			else:
+				self._packets.pop(key, None)
 			self._finish()
 			return transfer
 		except BaseException:
@@ -287,20 +350,24 @@ class AxiStreamSink[T = PayloadValue](_Endpoint[T]):
 			raise
 
 	async def recv_frame(self, *, max_transfers: int | None = None) -> list[AxiStreamTransfer[T]]:
-		"""Collect transfers through the first accepted last=True, retaining last.
+		"""Assemble the next completed packet, separately for each (id, dest).
 
 		A bound last signal is required. ``max_transfers`` is an optional positive
-		integer count of accepted transfers; None (the default) collects without
+		integer length limit per packet; None (the default) collects without
 		a length bound. Invalid arguments fail before wire activity and do not
-		require reset. A frame ending exactly at the limit succeeds. If the
-		limit-th transfer lacks last, clear ready at its falling-edge cleanup,
-		then raise ValueError without accepting another transfer or draining.
+		require reset. A packet ending exactly at the limit succeeds. A packet
+		reaching that length without last fails after its falling-edge cleanup,
+		without accepting another transfer or draining.
 
-		Return a non-empty list of independent snapshots at the final cleanup.
-		Collection starts at the next accepted transfer; if earlier transfers
-		were consumed separately, this returns the remainder of that frame.
-		The whole call reserves the endpoint and preserves recv's full-rate
-		timing, including immediately consecutive frames.
+		Return a non-empty list of snapshots in packet-completion order.
+		Other streams' incomplete packets are retained for subsequent calls.
+		Absent id/dest have effective value zero. Assembly requires literal 0/1
+		identifiers; use recv() for raw meta-valued identifiers. The limit also
+		applies to retained packets, not just transfers read during this call.
+		There is no bound on the number of unfinished streams. Collection starts
+		at the next accepted transfer; earlier individual receives are not
+		replayed, so mixing APIs can return packet suffixes.
+		The whole call reserves the endpoint and preserves full-rate timing.
 
 		Use a simulation-time timeout for stalled traffic. The default has no
 		memory bound if last never arrives. Length errors, in-progress failures
@@ -316,16 +383,25 @@ class AxiStreamSink[T = PayloadValue](_Endpoint[T]):
 				raise ValueError("max_transfers must be positive")
 		token = self._begin()
 		try:
-			transfers: list[AxiStreamTransfer[T]] = []
+			if max_transfers is not None and any(len(packet) >= max_transfers for packet in self._packets.values()):
+				raise ValueError(f"retained packet has already reached max_transfers={max_transfers}; reset required")
 			while True:
 				transfer = await self._recv_one(token)
-				transfers.append(transfer)
+				try:
+					key = _identity(transfer.id, transfer.dest)
+				except ValueError as exc:
+					raise ProtocolValueError(str(exc)) from exc
+				packet = self._packets.setdefault(key, [])
+				packet.append(transfer)
 				if transfer.last:
-					_log.debug("received frame on %s, transfers=%s", self._bus.data._path, len(transfers))
+					del self._packets[key]
+					_log.debug(
+						"received packet on %s, identity=%s, transfers=%s", self._bus.data._path, key, len(packet)
+					)
 					self._finish()
-					return transfers
-				if max_transfers is not None and len(transfers) >= max_transfers:
-					raise ValueError(f"frame did not end within max_transfers={max_transfers}; reset required")
+					return packet
+				if max_transfers is not None and len(packet) >= max_transfers:
+					raise ValueError(f"packet did not end within max_transfers={max_transfers}; reset required")
 		except BaseException:
 			self._abort(token)
 			raise
@@ -340,10 +416,22 @@ class AxiStreamSink[T = PayloadValue](_Endpoint[T]):
 			if _bit(self._bus.valid, "valid"):
 				data = self._payload.read()
 				last = None if self._bus.last is None else _bit(self._bus.last, "last")
+				try:
+					metadata = self._sidebands.read()
+				except ValueError as exc:
+					raise ProtocolValueError(str(exc)) from exc
 				break
 		_log.debug("received transfer on %s, last=%s", self._bus.data._path, last)
 		await FallingEdge(self._clock)
 		self._check(token)
 		self._bus.ready.set(0)
 		self._finish_beat()
-		return AxiStreamTransfer(data, last)
+		return AxiStreamTransfer(
+			data,
+			last,
+			metadata.get("keep"),
+			metadata.get("strb"),
+			metadata.get("user"),
+			metadata.get("id"),
+			metadata.get("dest"),
+		)

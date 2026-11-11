@@ -22,7 +22,7 @@ def test_distribution(tmp_path: Path) -> None:
 	metadata = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
 	version = metadata["project"]["version"]
 	licence = (root / "LICENSE.txt").read_bytes()
-	package_files = {"__init__.py", "_binding.py", "_payload.py", "_stream.py", "py.typed"}
+	package_files = {"__init__.py", "_binding.py", "_payload.py", "_sideband.py", "_stream.py", "py.typed"}
 	wheel_path = dist / f"coaxi-{version}-py3-none-any.whl"
 	with zipfile.ZipFile(wheel_path) as wheel:
 		files = set(wheel.namelist())
@@ -60,6 +60,7 @@ def test_distribution(tmp_path: Path) -> None:
 			"tests/full_rate_cases.py",
 			"tests/frame_cases.py",
 			"tests/handle_cases.py",
+			"tests/sideband_cases.py",
 			"tests/hdl/stream_dut.vhd",
 			"examples/stream_loopback.py",
 			*[f"src/coaxi/{name}" for name in package_files],
@@ -98,6 +99,8 @@ for name, module in list(sys.modules.items()):
 		assert Path(module.__file__).is_relative_to(sys.argv[1]), (name, module.__file__)
 assert coaxi.to_unsigned(LogicArray("1010")) == 10
 assert coaxi.to_signed(LogicArray("1111")) == -1
+assert coaxi.AxiStreamSidebands().keep is None
+assert coaxi.AxiStreamTransfer(42, None).user is None
 try:
 	coaxi.to_unsigned(LogicArray("X001"))
 except ValueError:

@@ -43,16 +43,23 @@ def _control(handle: SimHandleBase, role: str) -> _Control:
 	raise SignalBindingError(f"{role}: {handle._path} must be a scalar or one-bit logic signal")
 
 
+def _logic(handle: SimHandleBase, role: str) -> _Control:
+	if isinstance(handle, LogicObject) or (isinstance(handle, LogicArrayObject) and len(handle) > 0):
+		return handle
+	raise SignalBindingError(f"{role}: {handle._path} must be a non-empty logic signal")
+
+
 @dataclass(frozen=True)
 class AxiStreamBus:
-	"""Bound data, valid, ready and optional last handles; no signals are driven.
+	"""Bound AXI4-Stream signals; construction does not drive any handles.
 
-	Use :meth:`bind` for names/defaults, or pass handles directly to this
-	constructor. Data may be a vector or record. Valid, ready and last must be
-	one-bit logic handles. Ready is required in this initial protocol subset.
-	Other AXI-Stream sidebands are not yet implemented. All roles and the clock
-	must refer to non-overlapping signals; do not use payload fields or bits as
-	handshake controls. Only identical-handle aliases are checked automatically.
+	Use :meth:`bind` for names/defaults, or pass handles directly. Data may be a
+	vector or record; valid, ready and last are one-bit logic. Ready and data
+	are currently required. All sidebands are explicitly selected.
+	Keep/strb require byte-aligned logic-vector data with one qualifier bit per
+	byte; record payloads have no implicit byte layout. User/id/dest accept any
+	positive logic width. All roles and the clock must be non-overlapping;
+	only identical-handle aliases are checked, not payload-field/bit overlap.
 	"""
 
 	data: SimHandleBase
@@ -64,17 +71,48 @@ class AxiStreamBus:
 	last: _Control | None = None
 	"""Source-owned frame boundary, or None for an unframed stream."""
 	_entity: HierarchyObject | None = field(default=None, repr=False, compare=False)
+	keep: _Control | None = field(default=None, kw_only=True)
+	"""Byte-presence mask, or None when absent."""
+	strb: _Control | None = field(default=None, kw_only=True)
+	"""Data/position-byte mask, or None when absent."""
+	user: _Control | None = field(default=None, kw_only=True)
+	"""Application-defined metadata, or None when absent."""
+	id: _Control | None = field(default=None, kw_only=True)
+	"""Stream identifier, or None when absent."""
+	dest: _Control | None = field(default=None, kw_only=True)
+	"""Routing destination, or None when absent."""
 
 	def __post_init__(self) -> None:
 		for role in ("valid", "ready", "last"):
 			handle = getattr(self, role)
 			if handle is not None:
 				_control(handle, role)
-		handles = [self.data, self.valid, self.ready]
-		if self.last is not None:
-			handles.append(self.last)
+		for role in ("keep", "strb", "user", "id", "dest"):
+			handle = getattr(self, role)
+			if handle is not None:
+				_logic(handle, role)
+		if self.keep is not None or self.strb is not None:
+			if not isinstance(self.data, LogicArrayObject) or len(self.data) == 0 or len(self.data) % 8:
+				raise SignalBindingError(
+					"keep/strb require byte-aligned logic-vector data; records have no byte layout"
+				)
+			lanes = len(self.data) // 8
+			for role in ("keep", "strb"):
+				handle = getattr(self, role)
+				if handle is not None:
+					width = 1 if isinstance(handle, LogicObject) else len(handle)
+					if width != lanes:
+						raise SignalBindingError(f"{role}: expected one bit per data byte ({lanes} bits)")
+		handles = self._handles()
 		if len({handle._path for handle in handles}) != len(handles):
-			raise SignalBindingError("data, valid, ready and last must refer to different signals")
+			raise SignalBindingError("stream roles must refer to different signals")
+
+	def _handles(self) -> list[SimHandleBase]:
+		return [
+			handle
+			for role in ("data", "valid", "ready", "last", "keep", "strb", "user", "id", "dest")
+			if (handle := getattr(self, role)) is not None
+		]
 
 	@classmethod
 	def bind(
@@ -87,6 +125,11 @@ class AxiStreamBus:
 		valid: Signal | None = None,
 		ready: Signal | None = None,
 		last: bool | Signal = False,
+		keep: bool | Signal = False,
+		strb: bool | Signal = False,
+		user: bool | Signal = False,
+		id: bool | Signal = False,
+		dest: bool | Signal = False,
 	) -> Self:
 		"""Resolve signals, using defaults only where no override is supplied.
 
@@ -95,25 +138,32 @@ class AxiStreamBus:
 		``tdata`` etc. ``t_prefix=False`` removes only the generated ``t``.
 		``data``, ``valid`` and ``ready`` override individual defaults with exact
 		child names or handles. Explicit names are never modified.
-		``last=False`` omits last even if it exists; True requires its generated
-		name; a name or handle binds it explicitly. No optional signal is probed.
+		``last``, ``keep``, ``strb``, ``user``, ``id`` and ``dest`` independently
+		select optional signals: False omits, True requires the generated name,
+		and a name/handle binds it exactly. No optional signal is probed.
+		Byte qualifiers require byte-aligned vector data and one bit per byte.
 		"""
 		stem = (f"{prefix}_" if prefix else "") + ("t" if t_prefix else "")
 
 		def required(role: str, override: Signal | None) -> SimHandleBase:
 			return _resolve(entity, stem + role if override is None else override, role)
 
-		last_handle = None
-		if last is True:
-			last_handle = _control(_resolve(entity, stem + "last", "last"), "last")
-		elif last is not False:
-			last_handle = _control(_resolve(entity, last, "last"), "last")
+		def optional(role: str, selection: bool | Signal) -> _Control | None:
+			if selection is False:
+				return None
+			return _logic(_resolve(entity, stem + role if selection is True else selection, role), role)
+
 		return cls(
 			required("data", data),
 			_control(required("valid", valid), "valid"),
 			_control(required("ready", ready), "ready"),
-			last_handle,
+			optional("last", last),
 			entity,
+			keep=optional("keep", keep),
+			strb=optional("strb", strb),
+			user=optional("user", user),
+			id=optional("id", id),
+			dest=optional("dest", dest),
 		)
 
 	def resolve_clock(self, clock: Signal) -> _Control:
@@ -123,6 +173,6 @@ class AxiStreamBus:
 		the entity supplied to :meth:`bind`. Return a one-bit logic handle.
 		"""
 		handle = _control(_resolve(self._entity, clock, "clock"), "clock")
-		if handle in (self.data, self.valid, self.ready, self.last):
+		if handle in self._handles():
 			raise SignalBindingError("clock must be separate from stream signals")
 		return handle

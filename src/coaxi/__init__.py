@@ -6,6 +6,7 @@
 
 from ._binding import AxiStreamBus, Signal, SignalBindingError
 from ._payload import HandlePayload, Payload, PayloadValue, to_signed, to_unsigned
+from ._sideband import AxiStreamSidebands, SidebandValue
 from ._stream import (
 	AxiStreamSink,
 	AxiStreamSource,
@@ -17,6 +18,7 @@ from ._stream import (
 
 __all__ = [
 	"AxiStreamBus",
+	"AxiStreamSidebands",
 	"AxiStreamSink",
 	"AxiStreamSource",
 	"AxiStreamTransfer",
@@ -25,6 +27,7 @@ __all__ = [
 	"Payload",
 	"PayloadValue",
 	"ProtocolValueError",
+	"SidebandValue",
 	"Signal",
 	"SignalBindingError",
 	"TransferReset",

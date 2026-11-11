@@ -13,6 +13,9 @@ Do not use the former `cocotbext.axi` namespace or add a compatibility package.
 The first implementation should make AXI-Stream work well, with a small, clear
 foundation that can later support AXI4 and AXI4-Lite. Do not implement the other
 protocols ahead of that goal or build abstractions solely for hypothetical needs.
+The stream target is full AXI4-Stream, not AXI5-Stream wake-up/parity extensions.
+Keep bare-bones usage clean: optional sideband support must not make callers
+supply metadata objects or restate defaults for ordinary transfers.
 
 Do not depend on `cocotb-bus` or `cocotbext-bus`. Keep signal binding simple and
 within this library.
@@ -55,6 +58,9 @@ and their trade-offs. Do not invent requirements or silently settle the choice.
   should be usable as naturally as a vector payload.
 - Keep payload access and conversion separate from handshake and framing logic.
   Do not require every payload to be flattened into an integer or byte sequence.
+- Keep/strb require a defined byte-lane layout. Support byte-aligned logic vectors;
+  do not infer byte lanes or flatten custom records to provide these qualifiers.
+  Other sidebands remain independent of payload shape.
 
 ### Transactions and framing
 

@@ -10,13 +10,17 @@ Hatchling builds the distribution. There is no compatibility package under the
 former `cocotbext.axi` namespace.
 
 The initial AXI-Stream implementation supports individual transfers and complete
-frames. AXI4, AXI4-Lite, other optional sidebands and automatic reset-pin
-monitoring are not implemented.
+frames, all AXI4-Stream transfer sidebands, and interleaved packet assembly.
+The agreed target is AXI4-Stream only, excluding AXI5-Stream wake-up/parity.
+AXI4 memory-mapped, AXI4-Lite, permitted data/ready omissions, continuous queued
+capture without ready, and automatic reset-pin monitoring are not implemented.
+The current subset is not yet the full-standard target.
 
 ## Components
 
 - `_binding.py` resolves each protocol role to an independent HDL handle.
-  `AxiStreamBus` contains data, valid, ready and optional last handles. It does
+  `AxiStreamBus` contains data/valid/ready and explicitly selected optional
+  last/keep/strb/user/id/dest handles. It does
   not drive signals. Clock binding is independent of the bus naming defaults.
 - `_payload.py` separates payload access from handshake logic. `HandlePayload`
   handles logic/vector leaves and named containers such as VHDL records using
@@ -24,6 +28,12 @@ monitoring are not implemented.
   Reads retain HDL logic values; integer conversion is explicit. Endpoint
   constructor overloads require an adapter when using application value types;
   omitting the adapter selects `PayloadValue`.
+- `_sideband.py` keeps metadata conversion separate from generic payload access.
+  `AxiStreamSidebands` is an optional immutable source input; it is unnecessary
+  for bare-bones traffic. Bound defaults are keep=ones, strb=effective keep,
+  user/id/dest=zero. Reads return raw independent logic snapshots. Both source
+  and sink reject literal keep=0/strb=1 lane pairs; meta-valued qualifiers remain
+  raw and do not establish protocol validity. No byte packing is performed.
 - `_stream.py` provides `AxiStreamSource`, `AxiStreamSink` and
   `AxiStreamTransfer[T]`. An endpoint permits one active operation (one transfer
   or one whole frame) and has no background queue. Drives occur at falling edges;
@@ -37,15 +47,31 @@ monitoring are not implemented.
   Cleanup writes can be superseded on the same edge; valid/ready need not pulse
   low between calls. Initial calls still wait for a fresh falling edge.
 
-`send_frame(Sequence[T])` requires non-empty input and a bound last signal,
-generating last only on the final transfer. Values are caller-owned and must
-remain unchanged until completion; payload validation occurs per transfer.
-`recv_frame(*, max_transfers=None)` requires last and returns a non-empty
-`list[AxiStreamTransfer[T]]` through the first accepted last. None collects
-without a length/memory bound; an optional positive integer counts accepted
-transfers. Last exactly at the limit succeeds. Without last at that limit,
-cleanup deasserts ready and then raises ValueError, with no extra acceptance,
-partial result or automatic draining.
+`send_frame(Sequence[T], *, sidebands=None)` requires non-empty input and bound
+last, generating last only on the final transfer. Optional metadata is a matching
+sequence of `AxiStreamSidebands`. Values remain caller-owned until completion;
+validation occurs per transfer. Packet identity (id,dest) must remain constant;
+individual sends can interleave streams. No metadata objects are needed for
+ordinary sends or frames, even when sideband signals are bound.
+
+`AxiStreamTransfer[T]` preserves positional data/last, adding optional raw logic
+keep/strb/user/id/dest fields. None means physically absent, distinct from each
+signal's effective protocol default.
+
+`recv_frame(*, max_transfers=None)` requires last and returns the next completed
+packet as a non-empty `list[AxiStreamTransfer[T]]`. Incomplete packets are retained
+in a dictionary keyed by effective (id,dest), defaulting absent identifiers to zero.
+Each packet retains its own transfer order; packets return in completion order.
+Assembly requires literal binary identifiers; `recv()` preserves raw wire order
+and meta-valued identifiers. A raw receive discards the retained prefix for its
+identity (all prefixes if unresolved), preventing assembly across consumed beats
+or packet boundaries. It does not replay prefixes or discard other known streams.
+None collects without a length/memory bound. The optional positive limit applies
+to each packet, including retained prefixes; it does not bound stream count.
+Last exactly at the limit succeeds. Without last at that length, cleanup deasserts
+ready and raises ValueError with no extra acceptance or draining. A later call
+whose limit was already reached by a retained prefix fails before more acceptance.
+Reset, cancellation and in-progress faults discard partial packet assembly.
 
 Public single/frame operations acquire one ownership token, share private
 token-aware per-transfer routines, and release only after final cleanup.
@@ -58,7 +84,8 @@ sequence indexing or frame limits) and cancellation require reset. A receive
 starts at the next accepted transfer, possibly partway through an existing
 frame; local reset restores outputs but does not restore frame alignment.
 
-The source owns data, valid and last; the sink owns ready. Explicit `reset()`
+The source owns data, valid, last and all selected sidebands; the sink owns ready
+and its partial packet assembly. Explicit `reset()`
 invalidates pending work and clears owned outputs at a falling edge. Failed or
 cancelled operations require reset. Local recovery cannot undo a transfer
 already accepted by the DUT and must be coordinated with DUT reset. Spawned
@@ -88,8 +115,13 @@ Each signal accepts an exact child name or an already-bound cocotb handle.
 Per-signal arguments allow one override while retaining all other defaults;
 supplied names receive no prefix, suffix or case changes. Names need not share
 a pattern or be valid Python attribute names. Optional last is explicitly
-selected and is never discovered merely because a naming default exists.
-The initial subset requires ready and does not expose other optional sidebands.
+selected, as are keep/strb/user/id/dest; no optional signal is discovered merely
+because a naming default exists. Bare-bones binding is unchanged.
+This subset still requires data and ready. Byte qualifiers require a byte-aligned
+LogicArrayObject payload and exactly one bit per byte; no scalar/record layout is
+inferred. Qualifier significance is positional (rightmost bit is the least
+significant byte), independent of HDL indices. User/id/dest accept any positive
+logic width and do not depend on payload shape.
 Signals for different roles and the clock must not overlap. Identical aliases
 are checked, but payload-field or bit overlap remains the caller's responsibility.
 
@@ -127,6 +159,14 @@ a caller's name.
   optional-limit boundaries, preflight validation and incomplete-frame recovery.
   Interruptions cover intermediate/final acceptance before cleanup, stale tasks
   after reset, adapter/control failures and sequence access failures.
+- `tests/sideband_cases.py` checks default/mixed/direct bindings, qualifier width
+  and record restrictions, unchanged bare-bones usage, defaults with omitted
+  signals, scalar qualifier handles and wide identifiers. The registered DUT
+  carries all sidebands; 128-beat tests check snapshots before HDL updates and
+  consecutive acceptance cycles. Independent peers check backpressure, reserved
+  qualifier faults, metadata preflight validation and reset ownership. Packet
+  cases cover id/dest demultiplexing, completion order, per-packet metadata,
+  null final beats, retained-prefix limits, cancellation and raw wire order.
 - `tests/handle_cases.py` exercises scalar payloads with one-bit vector controls
   and a one-bit vector clock, using both ascending and descending non-zero
   indices. It checks full-rate frames, independent scalar snapshots, deliberate
