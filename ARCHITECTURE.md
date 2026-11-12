@@ -112,8 +112,11 @@ dequeue/delivery, so older backlog cannot hide an error. The fault remains until
 initialise()/close(). No unobserved background exception is used for notification.
 Foreground receive cancellation/failure also stops capture and requires initialise().
 Initialisation clears retained state and faults before yielding; successful cleanup starts
-a new collector. Invalidating a generation precedes task cancellation, and all
-post-edge publication/finalisation is generation-guarded. Old foreground tasks
+a new collector. Invalidating a generation and detaching its task reference
+precede cancellation. If the collector itself observes reset before the pin
+watcher, it is not cancelled from within its own task; it returns through its
+generation guard after invalidation has discarded state and notified receivers.
+All post-edge publication/finalisation is generation-guarded. Old foreground tasks
 are also token-guarded before retiring counts or changing assembly.
 Wake-up events are replaced after notification to avoid stale-set busy loops.
 
@@ -277,6 +280,10 @@ a caller's name.
   pin values, deferred ReadOnly cleanup, cancelled initialisation, shutdown/rearm,
   accepted-before-interruption traffic and stale foreground tasks. It also verifies
   that cancellation and first faults survive pin cycling and adapter-clear errors.
+  Deterministic collector-first reset cases delay the watcher, then assert before
+  a rising-edge sample or before falling-edge publication, for both polarities.
+  Held-reset/stopped-clock checks require prompt interruption, complete retention
+  disposal and automatic capture recovery without replaying pre-reset traffic.
 - `tests/hdl/stream_dut.vhd` is the VHDL-2008 DUT, including a registered stream
   path, a two-field signed IQ record and undriven scalar/vector-control signals.
 - `examples/stream_loopback.py` is a bounded cocotb usage example for unframed

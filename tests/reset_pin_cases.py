@@ -521,6 +521,73 @@ async def stale_foreground_operation(dut: HierarchyObject) -> None:
 
 
 @cocotb.test(timeout_time=5000, timeout_unit="ns")
+@cocotb.parametrize(high=[False, True], after_acceptance=[False, True])
+async def collector_observes_reset_first(dut: HierarchyObject, high: bool, after_acceptance: bool) -> None:
+	"""Collector-first pin observation must discard state and wake a receiver without self-cancellation."""
+	await _setup(dut)
+	pin = _pin(dut, high)
+	watch_allowed = Event()
+
+	class DelayedWatcher(AxiStreamSink[PayloadValue | None]):
+		async def _watch_reset(self, generation: object) -> None:
+			# Force the collector's real pin-observation fallback before the
+			# watcher can handle the same change, independently of callback order.
+			await watch_allowed.wait()
+			await super()._watch_reset(generation)
+
+	sink = DelayedWatcher(_bus(dut, ready=False), "beat_clock", reset=pin, reset_active_high=high)
+	initialising = cocotb.start_soon(sink.initialise())
+	await Timer(1, unit="ns")
+	for level in (True, False, True, False):  # Initial R0, R1 and F1.
+		await _edge(dut, level)
+	await initialising
+
+	dut.sb_tkeep.value = 3
+	dut.sb_tdata.value = 11
+	dut.sb_tid.value = 1
+	dut.sb_tlast.value = 0
+	dut.sb_tvalid.value = 1
+	packet = cocotb.start_soon(_result(sink.recv_frame()))
+	await _edge(dut, True)
+	await _edge(dut, False)
+	assert not packet.done()
+	assert sink._retained == 1 and len(sink._packets[(1, 0)]) == 1
+
+	dut.sb_tdata.value = 22
+	if after_acceptance:
+		await _edge(dut, True)
+		assert sink._retained == 2  # One prefix plus one unpublished snapshot.
+	pin.value = int(high)
+	await _edge(dut, not after_acceptance)
+	# Stop the clock here and hold reset. No later pin edge may mask a lost
+	# notification, stale prefix or failure to schedule the reset-cycle task.
+	await Timer(2, unit="ns")
+	assert packet.done(), "collector-first assertion did not wake the pending packet receive"
+	assert isinstance(await packet, TransferReset)
+	assert not sink._packets and not sink._queue and sink._retained == 0
+	assert sink._capture_task is None and sink._capture_generation is None
+	assert sink._fault is None
+	with pytest.raises(EndpointStateError):
+		await sink.recv()
+
+	dut.sb_tvalid.value = 0
+	watch_allowed.set()
+	await _edge(dut, True)
+	pin.value = int(not high)
+	for level in (False, True, False, True, False):  # Replacement R0, R1 and F1.
+		await _edge(dut, level)
+	dut.sb_tdata.value = 77
+	dut.sb_tlast.value = 1
+	dut.sb_tvalid.value = 1
+	await _edge(dut, True)
+	await _edge(dut, False)
+	dut.sb_tvalid.value = 0
+	assert [_number(beat) for beat in await sink.recv_frame()] == [77]
+	assert sink._retained == 0
+	await sink.close()
+
+
+@cocotb.test(timeout_time=5000, timeout_unit="ns")
 async def stopped_no_ready_packet(dut: HierarchyObject) -> None:
 	"""Pin assertion wakes a clock-stopped packet receive and discards its retained prefix."""
 	await _setup(dut)

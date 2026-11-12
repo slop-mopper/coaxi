@@ -11,7 +11,7 @@ from collections import deque
 from collections.abc import Sequence
 
 import cocotb
-from cocotb.task import Task
+from cocotb.task import Task, current_task
 from cocotb.types import Logic, LogicArray
 from cocotb.simtime import get_sim_time
 from cocotb.triggers import (
@@ -593,9 +593,12 @@ class AxiStreamSink[T = PayloadValue | None](_Endpoint[T]):
 
 	def _stop_capture(self) -> None:
 		self._capture_generation = None
-		if self._capture_task is not None:
-			self._capture_task.cancel()
-			self._capture_task = None
+		task = self._capture_task
+		self._capture_task = None
+		# The collector may itself observe reset before the pin watcher. Let
+		# its generation guard return rather than trying to cancel this task.
+		if task is not None and task is not current_task():
+			task.cancel()
 
 	def _discard(self) -> None:
 		self._packets.clear()
