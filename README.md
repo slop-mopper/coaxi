@@ -525,11 +525,15 @@ record payloads. Both cocotb inertial-write modes are tested.
 
 `uv run pytest -q tests/test_distribution.py` builds a source distribution and a
 wheel from it in a temporary directory. It checks metadata, licence inclusion,
-the public exports and type marker, installs the wheel without dependencies into
-a temporary directory, then imports/exercises that installed package in a fresh
-interpreter. This smoke check uses dependencies from the current project-local
-`.venv`; it does not validate a minimal consumer environment.
-Build isolation may need to download the declared build backend when uncached.
+the public exports and type marker, then creates a fresh temporary uv virtual
+environment. Only the wheel and its declared runtime dependencies are installed,
+constrained to the versions in `uv.lock`.
+An isolated interpreter checks public imports, conversions and frame signatures.
+The source archive's vector/IQ-record example also runs under `nvc` in both
+write modes using the installed wheel. Import-origin checks reject accidental
+use of the editable checkout or its development environment. This validates the
+locked runtime graph, rather than every permitted dependency version.
+Build isolation and runtime installation may need downloads when uncached.
 It performs no publication or upload.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the components, timing model and

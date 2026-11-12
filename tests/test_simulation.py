@@ -5,6 +5,7 @@
 """Run the VHDL-2008 regression with nvc and both cocotb write modes."""
 
 from pathlib import Path
+from xml.etree import ElementTree
 
 import pytest
 from cocotb_tools.runner import get_runner
@@ -14,8 +15,12 @@ from cocotb_tools.runner import get_runner
 @pytest.mark.parametrize(
 	"suite", ["regression", "full_rate", "frames", "handles", "sidebands", "omissions", "reset_pin", "example"]
 )
-def test_stream_simulation(tmp_path: Path, trust_inertial: str, suite: str) -> None:
-	"""Build in tmp_path and run suite with the selected write mode."""
+def test_stream_simulation(tmp_path: Path, trust_inertial: str, suite: str, monkeypatch: pytest.MonkeyPatch) -> None:
+	"""Build in tmp_path, run suite with the selected write mode and require passing results."""
+	# cocotb's runner merges os.environ over extra_env. Override inherited
+	# values so parametrisation really exercises both modes in any environment.
+	monkeypatch.setenv("COCOTB_TRUST_INERTIAL_WRITES", trust_inertial)
+	monkeypatch.setenv("COCOTB_RESOLVE_X", "ZEROS")
 	tests = Path(__file__).parent.resolve()
 	test_module = {
 		"regression": "stream_cases",
@@ -41,8 +46,9 @@ def test_stream_simulation(tmp_path: Path, trust_inertial: str, suite: str) -> N
 		test_dir=test_dir,
 		build_dir=tmp_path / "sim_build",
 		results_xml=str(tmp_path / "results.xml"),
-		extra_env={
-			"COCOTB_TRUST_INERTIAL_WRITES": trust_inertial,
-			"COCOTB_RESOLVE_X": "ZEROS",
-		},
 	)
+	results = ElementTree.parse(tmp_path / "results.xml").findall(".//testcase")
+	assert results, "simulator produced no test cases"
+	for result in results:
+		for status in ("failure", "error", "skipped"):
+			assert result.find(status) is None, ElementTree.tostring(result, encoding="unicode")

@@ -11,10 +11,11 @@ import zipfile
 import subprocess
 from pathlib import Path
 from email.parser import Parser
+from xml.etree import ElementTree
 
 
 def test_distribution(tmp_path: Path) -> None:
-	"""Verify the source/wheel contents and public imports using the current uv environment."""
+	"""Verify source/wheel contents, isolated runtime installation and the installed example."""
 	root = Path(__file__).resolve().parents[1]
 	dist = tmp_path / "dist"
 	# uv's default builds the wheel from the sdist, rather than the live checkout.
@@ -72,33 +73,68 @@ def test_distribution(tmp_path: Path) -> None:
 		assert member is not None
 		with member:
 			assert member.read() == licence
-	installed = tmp_path / "installed"
+		fixture = tmp_path / "fixture"
+		fixture.mkdir()
+		for relative in ("examples/stream_loopback.py", "tests/hdl/stream_dut.vhd"):
+			member = source.extractfile(f"{prefix}/{relative}")
+			assert member is not None
+			with member:
+				(fixture / Path(relative).name).write_bytes(member.read())
+
+	# Install only the wheel's runtime graph at locked versions. The consumer
+	# must not inherit development packages; uv may download uncached wheels.
+	consumer = tmp_path / "consumer"
+	subprocess.run(["uv", "venv", "--python", sys.executable, str(consumer)], check=True, timeout=30)
+	python = consumer / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+	lock = tomllib.loads((root / "uv.lock").read_text(encoding="utf-8"))
+	constraints = tmp_path / "constraints.txt"
+	constraints.write_text(
+		"".join(
+			f"{package['name']}=={package['version']}\n" for package in lock["package"] if package["name"] != "coaxi"
+		),
+		encoding="utf-8",
+	)
 	subprocess.run(
-		["uv", "pip", "install", "--python", sys.executable, "--no-deps", "--target", str(installed), str(wheel_path)],
-		cwd=root,
+		[
+			"uv",
+			"pip",
+			"install",
+			"--python",
+			str(python),
+			"--constraint",
+			str(constraints),
+			str(wheel_path),
+		],
 		check=True,
 		timeout=120,
 	)
-	# -I excludes cwd/PYTHONPATH; place the installed wheel ahead of the editable install.
-	# Runtime dependencies still come from the uv-managed project-local environment.
+	# -I excludes cwd/PYTHONPATH; neither the checkout nor its .venv supplies imports.
 	smoke = """
 import inspect
 import sys
 from pathlib import Path
-from importlib.metadata import distribution
+from importlib.metadata import distribution, PackageNotFoundError
 
-sys.path.insert(0, sys.argv[1])
 import coaxi
 from cocotb.types import LogicArray
 
-assert Path(coaxi.__file__).is_relative_to(sys.argv[1]), coaxi.__file__
-assert Path(distribution("coaxi").locate_file("")).resolve() == Path(sys.argv[1]).resolve()
+consumer = Path(sys.argv[1]).resolve()
+assert Path(sys.prefix).resolve() == consumer
+assert Path(coaxi.__file__).is_relative_to(consumer), coaxi.__file__
+assert Path(distribution("coaxi").locate_file("")).resolve().is_relative_to(consumer)
+for development_package in ("pyrefly", "ruff"):
+	try:
+		distribution(development_package)
+	except PackageNotFoundError:
+		pass
+	else:
+		raise AssertionError(f"consumer inherited {development_package}")
 assert coaxi.__all__
 for name in coaxi.__all__:
 	assert getattr(coaxi, name) is not None, name
 for name, module in list(sys.modules.items()):
 	if name == "coaxi" or name.startswith("coaxi."):
-		assert Path(module.__file__).is_relative_to(sys.argv[1]), (name, module.__file__)
+		assert Path(module.__file__).is_relative_to(consumer), (name, module.__file__)
 assert coaxi.to_unsigned(LogicArray("1010")) == 10
 assert coaxi.to_signed(LogicArray("1111")) == -1
 assert coaxi.AxiStreamSidebands().keep is None
@@ -122,8 +158,54 @@ assert inspect.signature(coaxi.AxiStreamSink).parameters["buffer_capacity"].defa
 assert inspect.signature(coaxi.AxiStreamSink.recv_frame).parameters["max_transfers"].default is None
 """
 	subprocess.run(
-		[sys.executable, "-I", "-c", smoke, str(installed)],
+		[str(python), "-I", "-c", smoke, str(consumer)],
 		cwd=tmp_path,
 		check=True,
 		timeout=30,
 	)
+
+	# Check import origin inside the simulator too, using the sdist's example
+	# and HDL fixture rather than anything on the checkout's module path.
+	example = fixture / "stream_loopback.py"
+	with example.open("a", encoding="utf-8") as module:
+		module.write(
+			"\nimport sys\nfrom pathlib import Path\nimport coaxi\n"
+			f"_expected_consumer = Path({str(consumer)!r}).resolve()\n"
+			"assert Path(sys.prefix).resolve() == _expected_consumer, sys.prefix\n"
+			"assert Path(coaxi.__file__).is_relative_to(_expected_consumer), coaxi.__file__\n"
+		)
+	simulate = """
+import os
+import sys
+from pathlib import Path
+from cocotb_tools.runner import get_runner
+
+fixture = Path(sys.argv[1])
+runner = get_runner("nvc")
+runner.build(
+	sources=[fixture / "stream_dut.vhd"],
+	hdl_toplevel="stream_dut",
+	build_args=["--std=2008"],
+	build_dir=fixture / "sim_build",
+)
+for mode in ("0", "1"):
+	# The runner merges os.environ over extra_env; set the requested values here.
+	os.environ["COCOTB_TRUST_INERTIAL_WRITES"] = mode
+	os.environ["COCOTB_RESOLVE_X"] = "ZEROS"
+	runner.test(
+		hdl_toplevel="stream_dut",
+		test_module="stream_loopback",
+		test_dir=fixture,
+		build_dir=fixture / "sim_build",
+		results_xml=str(fixture / f"results-{mode}.xml"),
+	)
+"""
+	subprocess.run([str(python), "-I", "-c", simulate, str(fixture)], cwd=tmp_path, check=True, timeout=60)
+	# A simulator can exit successfully without producing results. Require
+	# both completed runs, rather than trusting the runner's process status.
+	for mode in ("0", "1"):
+		results = ElementTree.parse(fixture / f"results-{mode}.xml").findall(".//testcase")
+		assert len(results) == 1
+		assert results[0].get("name") == "stream_loopback"
+		for status in ("failure", "error", "skipped"):
+			assert results[0].find(status) is None, ElementTree.tostring(results[0], encoding="unicode")

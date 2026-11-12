@@ -227,11 +227,19 @@ a caller's name.
 
 - `tests/test_values.py` covers explicit numeric conversion.
 - `tests/test_distribution.py` builds the sdist and a wheel from that sdist using
-  `uv build`, checks metadata, the CC0 licence and package contents, then installs
-  the wheel without dependencies into a temporary target directory. A fresh
-  interpreter imports all public exports and exercises conversions/frame
-  signatures from that installation. The check uses the current `.venv`
-  dependencies; it does not claim validation in a minimal consumer environment.
+  `uv build`, checks metadata, the CC0 licence and package contents, then creates
+  a temporary uv virtual environment without development packages. Wheel
+  installation resolves only declared runtime dependencies, constrained to the
+  versions in `uv.lock`, downloading uncached packages. An isolated interpreter checks
+  all public exports, conversions and frame signatures from that installation.
+  The source archive's vector/IQ-record example and HDL fixture run under NVC
+  in both write modes in the consumer environment. Import-origin assertions in
+  Python and the simulator reject accidental use of the editable checkout.
+  This validates the locked runtime graph, not every permitted dependency version.
+  Both this check and the main simulator runner explicitly set write-mode and
+  meta-value resolution environment variables, overriding inherited settings.
+  Result XML must contain successful, non-skipped test cases; a successful
+  simulator process alone is insufficient.
 - `tests/test_typing.py` checks default/custom constructor inference and
   rejection of specialised endpoints without adapters, and generic frame method
   input/result types using default Pyrefly.
