@@ -67,8 +67,8 @@ async def scalar_full_rate(dut: HierarchyObject) -> None:
 	bus = _setup(dut)
 	source = AxiStreamSource(bus, clock="single_clock")
 	sink = AxiStreamSink(bus, clock=dut.single_clock)
-	await source.reset()
-	await sink.reset()
+	await source.initialise()
+	await sink.initialise()
 	samples: list[PayloadValue] = [0, 1, "L", Logic("H"), LogicArray("U"), "X", Logic("Z"), "W", "-"]
 	expected = [str(value) for value in samples] * 8
 	observed: list[tuple[int, str, bool]] = []
@@ -101,8 +101,8 @@ async def scalar_full_rate(dut: HierarchyObject) -> None:
 	await ReadOnly()
 	assert str(bus.valid.value) == str(bus.ready.value) == str(dut.single_last.value) == "0"
 	assert str(bus.data.value) == "-"
-	await source.reset()
-	await sink.reset()
+	await source.initialise()
+	await sink.initialise()
 	await ReadOnly()
 	assert str(bus.data.value) == "0"
 	assert [str(value) for value in snapshots] == expected
@@ -113,7 +113,7 @@ async def scalar_validation(dut: HierarchyObject) -> None:
 	"""Reject invalid scalar leaves without changing data; reset clears deliberate X."""
 	bus = _setup(dut, framed=False)
 	source = AxiStreamSource(bus, clock="single_clock")
-	await source.reset()
+	await source.initialise()
 	bus.ready.value = 1
 	bad_values: list[PayloadValue] = [-1, 2, "10", "?", LogicArray("11"), {}]
 	for value in bad_values:
@@ -125,9 +125,9 @@ async def scalar_validation(dut: HierarchyObject) -> None:
 		await ReadOnly()
 		assert str(bus.data.value) == "X"
 		assert str(bus.valid.value) == "0"
-		with pytest.raises(EndpointStateError, match="reset"):
+		with pytest.raises(EndpointStateError, match="initialise"):
 			await source.send(1)
-		await source.reset()
+		await source.initialise()
 		await ReadOnly()
 		assert str(bus.data.value) == str(bus.valid.value) == "0"
 
@@ -137,7 +137,7 @@ async def scalar_backpressure(dut: HierarchyObject) -> None:
 	"""Hold a meta-valued scalar and last stable while vector ready is low."""
 	bus = _setup(dut)
 	source = AxiStreamSource(bus, clock="single_clock")
-	await source.reset()
+	await source.initialise()
 	bus.ready.value = 0
 	sending = cocotb.start_soon(source.send(Logic("U"), last=True))
 	# The first call needs its own falling edge, even immediately after reset.
@@ -158,7 +158,7 @@ async def scalar_backpressure(dut: HierarchyObject) -> None:
 	await sending
 	await ReadOnly()
 	assert str(bus.valid.value) == str(dut.single_last.value) == "0"
-	await source.reset()
+	await source.initialise()
 	await ReadOnly()
 	assert str(bus.data.value) == "0"
 
@@ -170,29 +170,29 @@ async def vector_control_errors(dut: HierarchyObject, role: str, bits: str) -> N
 	bus = _setup(dut)
 	if role == "ready":
 		source = AxiStreamSource(bus, clock="single_clock")
-		await source.reset()
+		await source.initialise()
 		bus.ready.value = bits
 		error = await _capture(source.send(1, last=True))
 		assert type(error) is ProtocolValueError
 		assert str(error).startswith("ready ")
-		with pytest.raises(EndpointStateError, match="reset"):
+		with pytest.raises(EndpointStateError, match="initialise"):
 			await source.send(1, last=True)
-		await source.reset()
+		await source.initialise()
 		await ReadOnly()
 		assert str(bus.data.value) == str(bus.valid.value) == str(dut.single_last.value) == "0"
 		assert str(bus.ready.value) == bits
 	else:
 		sink = AxiStreamSink(bus, clock=dut.single_clock)
-		await sink.reset()
+		await sink.initialise()
 		bus.data.value = "X"  # Deliberate payload meta-value, distinct from the control fault.
 		bus.valid.value = bits if role == "valid" else 1
 		dut.single_last.value = bits if role == "last" else 1
 		error = await _capture(sink.recv())
 		assert type(error) is ProtocolValueError
 		assert str(error).startswith(f"{role} ")
-		with pytest.raises(EndpointStateError, match="reset"):
+		with pytest.raises(EndpointStateError, match="initialise"):
 			await sink.recv()
-		await sink.reset()
+		await sink.initialise()
 		await ReadOnly()
 		assert str(bus.ready.value) == "0"
 		assert str(bus.data.value) == "X"

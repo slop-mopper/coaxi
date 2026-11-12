@@ -100,8 +100,8 @@ async def presence_combinations(dut: HierarchyObject, data: bool, ready: bool) -
 	assert (bus.data is not None) is data and (bus.ready is not None) is ready
 	source = AxiStreamSource(bus, "beat_clock")
 	sink = AxiStreamSink(bus, "beat_clock")
-	await source.reset()
-	await sink.reset()
+	await source.initialise()
+	await sink.initialise()
 	dut.sb_tdata.value = 0xCAFE
 	dut.sb_tready.value = int(not ready)
 	samples = list(range(64)) if data else [None] * 64
@@ -165,12 +165,12 @@ async def omission_validation(dut: HierarchyObject) -> None:
 	with pytest.raises(ValueError, match="without ready"):
 		AxiStreamSink(_bus(dut, ready=True), "beat_clock", buffer_capacity=1)
 	source = AxiStreamSource(bus, "beat_clock")
-	await source.reset()
+	await source.initialise()
 	with pytest.raises(ValueError, match="requires data=None"):
 		await source.send(1)
 	with pytest.raises(EndpointStateError):
 		await source.send(None)
-	await source.reset()
+	await source.initialise()
 	await source.send(None)
 
 
@@ -182,7 +182,7 @@ async def idle_capture_and_live_timing(dut: HierarchyObject) -> None:
 	await _wire(dut, [(99, True, 0)])
 	with pytest.raises(EndpointStateError):
 		await sink.recv()
-	await sink.reset()
+	await sink.initialise()
 	values = [(7, False, 0), (7, False, 1), (9, True, 0), (10, True, 1)]
 	await _wire(dut, values)
 	await Timer(1, unit="ns")
@@ -215,8 +215,8 @@ async def registered_idle_capture(dut: HierarchyObject) -> None:
 	await _setup(dut)
 	source = AxiStreamSource(AxiStreamBus.bind(dut, prefix="s", last=True), "beat_clock")
 	sink = AxiStreamSink(AxiStreamBus.bind(dut, prefix="m", t_prefix=False, ready=False, last=True), "beat_clock")
-	await source.reset()
-	await sink.reset()
+	await source.initialise()
+	await sink.initialise()
 	dut.m_ready.value = 1
 	dut.allow_input.value = 1
 	values = list(range(128))
@@ -237,7 +237,7 @@ async def capacity_and_interleaving(dut: HierarchyObject) -> None:
 	bus = _bus(dut)
 	for capacity in (2, 3):
 		sink = AxiStreamSink(bus, "beat_clock", buffer_capacity=capacity)
-		await sink.reset()
+		await sink.initialise()
 		receiving = cocotb.start_soon(_result(sink.recv_frame()))
 		await _wire(dut, [(1, False, 0), (2, False, 1), (3, True, 0)])
 		result = await receiving
@@ -253,7 +253,7 @@ async def capacity_and_interleaving(dut: HierarchyObject) -> None:
 			assert [_number(item) for item in await sink.recv_frame()] == [5]
 		await sink.close()
 	sink = AxiStreamSink(bus, "beat_clock", buffer_capacity=2)
-	await sink.reset()
+	await sink.initialise()
 	await _wire(dut, [(11, True, 0), (12, True, 0)])
 	await Timer(1, unit="ns")
 	assert _number(await sink.recv()) == 11
@@ -261,7 +261,7 @@ async def capacity_and_interleaving(dut: HierarchyObject) -> None:
 	await Timer(1, unit="ns")
 	with pytest.raises(OverflowError):
 		await sink.recv_frame()
-	await sink.reset()
+	await sink.initialise()
 	await _wire(dut, [(15, True, 0)])
 	await Timer(1, unit="ns")
 	assert _number(await sink.recv()) == 15
@@ -273,7 +273,7 @@ async def queued_packet_mixing_and_limits(dut: HierarchyObject) -> None:
 	"""Reconcile raw/frame APIs and limits with an independent capture lifetime."""
 	await _setup(dut)
 	sink = AxiStreamSink(_bus(dut), "beat_clock", buffer_capacity=6)
-	await sink.reset()
+	await sink.initialise()
 	await _wire(dut, [(1, False, 0), (2, True, 1), (3, True, 0), (4, True, 0)])
 	await Timer(1, unit="ns")
 	assert [_number(item) for item in await sink.recv_frame()] == [2]
@@ -285,7 +285,7 @@ async def queued_packet_mixing_and_limits(dut: HierarchyObject) -> None:
 		await sink.recv_frame(max_transfers=2)
 	with pytest.raises(EndpointStateError):
 		await sink.recv()
-	await sink.reset()
+	await sink.initialise()
 	await _wire(dut, [(8, False, 0), (9, True, 0)])
 	await Timer(1, unit="ns")
 	assert len(await sink.recv_frame(max_transfers=2)) == 2
@@ -319,7 +319,7 @@ async def capture_faults(dut: HierarchyObject, fault: str, waiting: bool) -> Non
 	bus = AxiStreamBus.bind(dut, prefix="sb", ready=False, last=True, keep=True, strb=True)
 	adapter = _FailingPayload(dut)
 	sink = AxiStreamSink(bus, "beat_clock", payload=adapter)
-	await sink.reset()
+	await sink.initialise()
 	dut.sb_tstrb.value = 3
 	await _wire(dut, [(1, True, 0)])
 	await Timer(1, unit="ns")
@@ -347,7 +347,7 @@ async def capture_faults(dut: HierarchyObject, fault: str, waiting: bool) -> Non
 	await FallingEdge(dut.beat_clock)
 	dut.sb_tvalid.value = 0
 	adapter.fail = False
-	await sink.reset()
+	await sink.initialise()
 	dut.sb_tstrb.value = 3
 	await _wire(dut, [(2, True, 0)])
 	await Timer(1, unit="ns")
@@ -361,7 +361,7 @@ async def close_reset_and_cancellation(dut: HierarchyObject) -> None:
 	await _setup(dut)
 	adapter = _FailingPayload(dut)
 	sink = AxiStreamSink(_bus(dut), "beat_clock", payload=adapter)
-	await sink.reset()
+	await sink.initialise()
 	pending = cocotb.start_soon(_result(sink.recv()))
 	await Timer(1, unit="ns")
 	with pytest.raises(EndpointStateError):
@@ -376,7 +376,7 @@ async def close_reset_and_cancellation(dut: HierarchyObject) -> None:
 	assert adapter.reads == reads
 	with pytest.raises(EndpointStateError):
 		await sink.recv()
-	await sink.reset()
+	await sink.initialise()
 	pending = cocotb.start_soon(sink.recv())
 	await Timer(1, unit="ns")
 	pending.cancel()
@@ -386,10 +386,10 @@ async def close_reset_and_cancellation(dut: HierarchyObject) -> None:
 	assert adapter.reads == reads
 	with pytest.raises(EndpointStateError):
 		await sink.recv()
-	await sink.reset()
+	await sink.initialise()
 	pending = cocotb.start_soon(_result(sink.recv()))
 	await Timer(1, unit="ns")
-	resetting = cocotb.start_soon(sink.reset())
+	resetting = cocotb.start_soon(sink.initialise())
 	await Timer(1, unit="ns")
 	assert isinstance(await pending, TransferReset)
 	with pytest.raises(EndpointStateError):
@@ -399,7 +399,7 @@ async def close_reset_and_cancellation(dut: HierarchyObject) -> None:
 		await resetting
 	await _wire(dut, [(3, True, 0)])
 	assert adapter.reads == reads
-	await sink.reset()
+	await sink.initialise()
 	await _wire(dut, [(4, True, 0)])
 	await Timer(1, unit="ns")
 	assert str((await sink.recv()).data) == f"{4:016b}"
@@ -427,7 +427,7 @@ async def in_flight_capacity_and_stale_task(dut: HierarchyObject) -> None:
 	"""In-flight snapshots count; an old receive cannot deliver/decrement new state."""
 	await _setup(dut)
 	sink = _GatedSink(_bus(dut))
-	await sink.reset()
+	await sink.initialise()
 	pending = cocotb.start_soon(_result(sink.recv()))
 	await _wire(dut, [(1, True, 0)])
 	await sink.entered.wait()
@@ -435,7 +435,7 @@ async def in_flight_capacity_and_stale_task(dut: HierarchyObject) -> None:
 	await Timer(1, unit="ns")
 	sink.release.set()
 	assert isinstance(await pending, OverflowError)
-	await sink.reset()
+	await sink.initialise()
 	sink.hold = True
 	sink.entered.clear()
 	sink.release.clear()
@@ -443,7 +443,7 @@ async def in_flight_capacity_and_stale_task(dut: HierarchyObject) -> None:
 	await _wire(dut, [(3, True, 0)])
 	await sink.entered.wait()
 	await sink.close()
-	await sink.reset()
+	await sink.initialise()
 	new = cocotb.start_soon(_result(sink.recv()))
 	await _wire(dut, [(4, True, 0)])
 	sink.release.set()
@@ -462,20 +462,20 @@ async def invalidate_unpublished_capture(dut: HierarchyObject, action: str) -> N
 	"""Invalidate between acceptance and cleanup; old capture cannot leak or count."""
 	await _setup(dut)
 	sink = AxiStreamSink(_bus(dut), "beat_clock", buffer_capacity=1)
-	await sink.reset()
+	await sink.initialise()
 	pending = cocotb.start_soon(_result(sink.recv()))
 	await FallingEdge(dut.beat_clock)
 	dut.sb_tvalid.value = 1
 	dut.sb_tdata.value = 99
 	await RisingEdge(dut.beat_clock)
 	await Timer(1, unit="ns")
-	shutdown = cocotb.start_soon(sink.reset() if action == "reset" else sink.close())
+	shutdown = cocotb.start_soon(sink.initialise() if action == "reset" else sink.close())
 	await Timer(1, unit="ns")
 	dut.sb_tvalid.value = 0
 	assert isinstance(await pending, TransferReset)
 	await shutdown
 	if action == "close":
-		await sink.reset()
+		await sink.initialise()
 	await _wire(dut, [(1, True, 0)])
 	await Timer(1, unit="ns")
 	assert _number(await sink.recv()) == 1
@@ -490,7 +490,7 @@ async def close_without_clock(dut: HierarchyObject) -> None:
 	"""Closing an empty capture wakes its receiver without another clock edge."""
 	clock_task = await _setup(dut)
 	sink = AxiStreamSink(_bus(dut), "beat_clock")
-	await sink.reset()
+	await sink.initialise()
 	pending = cocotb.start_soon(_result(sink.recv()))
 	await Timer(1, unit="ns")
 	clock_task.cancel()
@@ -509,8 +509,8 @@ async def no_ready_record_snapshots(dut: HierarchyObject) -> None:
 	bus = AxiStreamBus.bind(dut, data="iq_word_in", valid="sample_available", ready=False, last="end_of_packet")
 	source = AxiStreamSource(bus, "beat_clock")
 	sink = AxiStreamSink(bus, "beat_clock")
-	await source.reset()
-	await sink.reset()
+	await source.initialise()
+	await sink.initialise()
 	await source.send_frame([{"i": 12, "q": 21}, {"i": "X000000000000001", "q": 0}])
 	await Timer(1, unit="ns")
 	now = get_sim_time(unit="step")
@@ -528,8 +528,8 @@ async def none_requires_absent_data(dut: HierarchyObject) -> None:
 	"""Nullable default typing does not turn None into a vector meta-value."""
 	await _setup(dut)
 	source = AxiStreamSource(_bus(dut), "beat_clock")
-	await source.reset()
+	await source.initialise()
 	with pytest.raises(TypeError, match="None requires"):
 		await source.send(None, last=True)
-	await source.reset()
+	await source.initialise()
 	assert int(dut.sb_tdata.value) == 0

@@ -70,8 +70,8 @@ async def _direct_burst[T](
 	values: list[T],
 	flags: list[bool | None],
 ) -> list[AxiStreamTransfer[T]]:
-	await source.reset()
-	await sink.reset()
+	await source.initialise()
+	await sink.initialise()
 	results: list[AxiStreamTransfer[T]] = []
 
 	async def send_all() -> None:
@@ -109,8 +109,8 @@ async def registered_full_rate(dut: HierarchyObject) -> None:
 	await _setup(dut)
 	source = AxiStreamSource(AxiStreamBus.bind(dut, prefix="s", last=True), "beat_clock")
 	sink = AxiStreamSink(AxiStreamBus.bind(dut, prefix="m", t_prefix=False, last=True), "beat_clock")
-	await source.reset()
-	await sink.reset()
+	await source.initialise()
+	await sink.initialise()
 	dut.allow_input.value = 1
 	values = [(index * 71, index % 7 in (0, 5, 6)) for index in range(128)]
 
@@ -211,12 +211,13 @@ async def custom_payload_full_rate(dut: HierarchyObject) -> None:
 
 
 @cocotb.test(timeout_time=10000, timeout_unit="ns")
-async def source_backpressure(dut: HierarchyObject) -> None:
+@cocotb.parametrize(reset_pin=[False, True])
+async def source_backpressure(dut: HierarchyObject, reset_pin: bool) -> None:
 	"""An independent receiver checks stability and immediate recovery from stalls."""
 	await _setup(dut)
 	bus = _record(dut)
-	source = AxiStreamSource(bus, "beat_clock")
-	await source.reset()
+	source = AxiStreamSource(bus, "beat_clock", reset=dut.reset_lane if reset_pin else None, reset_active_high=True)
+	await source.initialise()
 	count = 64
 
 	async def send_all() -> None:
@@ -253,15 +254,17 @@ async def source_backpressure(dut: HierarchyObject) -> None:
 	for _ in range(3):
 		await RisingEdge(dut.beat_clock)
 		assert str(bus.valid.value) == "0"  # No duplicate after the final return.
+	await source.close()
 
 
 @cocotb.test(timeout_time=10000, timeout_unit="ns")
-async def sink_source_gaps(dut: HierarchyObject) -> None:
+@cocotb.parametrize(reset_pin=[False, True])
+async def sink_source_gaps(dut: HierarchyObject, reset_pin: bool) -> None:
 	"""An independent source checks continuous ready, even across source gaps."""
 	await _setup(dut)
 	bus = AxiStreamBus.bind(dut, prefix="plain", t_prefix=False)
-	sink = AxiStreamSink(bus, "beat_clock")
-	await sink.reset()
+	sink = AxiStreamSink(bus, "beat_clock", reset=dut.reset_lane if reset_pin else None, reset_active_high=True)
+	await sink.initialise()
 	count = 96
 
 	async def recv_all() -> None:
@@ -293,6 +296,7 @@ async def sink_source_gaps(dut: HierarchyObject) -> None:
 	for _ in range(3):
 		await RisingEdge(dut.beat_clock)
 		assert str(bus.ready.value) == "0"
+	await sink.close()
 
 
 @cocotb.test(timeout_time=10000, timeout_unit="ns")
@@ -301,8 +305,8 @@ async def reuse_phase_guards(dut: HierarchyObject) -> None:
 	await _setup(dut)
 	bus = AxiStreamBus.bind(dut, prefix="plain", t_prefix=False)
 	source, sink = AxiStreamSource(bus, "beat_clock"), AxiStreamSink(bus, "beat_clock")
-	await source.reset()
-	await sink.reset()
+	await source.initialise()
+	await sink.initialise()
 	dut.plain_ready.value = 1
 	for phase in ("read_only", "read_write", "delay", "later_falling"):
 		await source.send(1)
@@ -321,7 +325,7 @@ async def reuse_phase_guards(dut: HierarchyObject) -> None:
 	dut.plain_ready.value = 0
 	dut.plain_valid.value = 1
 	# Reset must not grant permission to reuse its clearing edge.
-	await sink.reset()
+	await sink.initialise()
 	reset_at = get_sim_time(unit="ns")
 	await sink.recv()
 	assert get_sim_time(unit="ns") - reset_at == 20
@@ -346,7 +350,7 @@ async def chained_failure_and_reset(dut: HierarchyObject) -> None:
 	await _setup(dut)
 	bus = AxiStreamBus.bind(dut, prefix="plain", t_prefix=False)
 	source = AxiStreamSource(bus, "beat_clock")
-	await source.reset()
+	await source.initialise()
 	dut.plain_ready.value = 1
 	await source.send(1)
 	completed = get_sim_time(unit="ns")
@@ -355,7 +359,7 @@ async def chained_failure_and_reset(dut: HierarchyObject) -> None:
 	assert get_sim_time(unit="ns") == completed  # The failing call used the same edge.
 	with pytest.raises(EndpointStateError):
 		await source.send(2)
-	await source.reset()
+	await source.initialise()
 	assert get_sim_time(unit="ns") == completed + 10
 	await source.send(3)  # Successful reset must not itself create a reusable edge.
 	assert get_sim_time(unit="ns") == completed + 30
@@ -384,8 +388,8 @@ async def interrupted_full_rate_receive(dut: HierarchyObject, interruption: str)
 	sink_bus = AxiStreamBus.bind(dut, prefix="m", t_prefix=False, last=True)
 	payload = _ReadFailure(sink_bus.data)
 	sink = AxiStreamSink(sink_bus, "beat_clock", payload=payload)
-	await source.reset()
-	await sink.reset()
+	await source.initialise()
+	await sink.initialise()
 	dut.allow_input.value = 1
 	prefix = 8
 	values = [(index * 71, index % 3 == 0) for index in range(prefix + 2)]
@@ -435,7 +439,7 @@ async def interrupted_full_rate_receive(dut: HierarchyObject, interruption: str)
 	else:
 		assert receiving.done()
 		assert len(errors) == 1 and str(errors[0]) == "injected chained read failure"
-	await sink.reset()  # Clear ready before another rising edge can accept data.
+	await sink.initialise()  # Clear ready before another rising edge can accept data.
 	if interruption != "cancel":
 		await receiving
 		if interruption == "reset":

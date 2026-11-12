@@ -54,6 +54,8 @@ architecture test of stream_dut is
 	signal byte_keep : std_logic := '0';
 	signal byte_strb : std_logic_vector(8 to 8) := "0";
 	signal short_data : std_logic_vector(6 downto 0) := (others => '0');
+	signal \recover-now!\ : std_logic := '1';
+	signal reset_lane : std_logic_vector(5 to 5) := "0";
 begin
 	s_tready <= allow_input and (not occupied or m_ready);
 	m_valid <= occupied;

@@ -77,11 +77,17 @@ and their trade-offs. Do not invent requirements or silently settle the choice.
 ### Clocks
 
 - Require every clock to contain only literal 0/1 values from before the first
-  endpoint reset onwards. Weak L/H and unresolved clock values are unsupported.
+  endpoint initialisation onwards. Weak L/H and unresolved clock values are unsupported.
 - Document this as a caller precondition. The current endpoints do not monitor
   clocks for invalid values.
 
 ### Meta-values and reset
+
+- `initialise()` performs local initialisation/recovery and never drives the DUT
+  reset pin. Do not name a non-pin-driving endpoint operation `reset()`.
+- Optional reset-pin monitoring supports configurable polarity, including
+  active-high. Do not infer polarity from names. Pin-only reset recovery must
+  preserve previously recorded faults/cancellation until explicit initialisation.
 
 - Handle HDL meta-values such as `X` and `U` explicitly. Do not silently convert
   them into ordinary data values.

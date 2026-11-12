@@ -22,8 +22,8 @@ async def stream_loopback(dut: HierarchyObject) -> None:
 	bus = AxiStreamBus.bind(dut, prefix="plain", t_prefix=False)
 	source = AxiStreamSource(bus, clock="beat_clock")
 	sink = AxiStreamSink(bus, clock="beat_clock")
-	await source.reset()
-	await sink.reset()
+	await source.initialise()
+	await sink.initialise()
 
 	# A same-bus loopback needs concurrent send/receive to complete its handshake.
 	sending = cocotb.start_soon(source.send(42))
@@ -42,8 +42,8 @@ async def stream_loopback(dut: HierarchyObject) -> None:
 	)
 	record_source = AxiStreamSource(record_bus, clock=dut.beat_clock)
 	record_sink = AxiStreamSink(record_bus, clock=dut.beat_clock)
-	await record_source.reset()
-	await record_sink.reset()
+	await record_source.initialise()
+	await record_sink.initialise()
 
 	samples = [
 		{"i": LogicArray.from_signed(i, 16), "q": LogicArray.from_signed(q, 16)} for i, q in ((-12, 34), (56, -78))

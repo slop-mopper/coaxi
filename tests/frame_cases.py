@@ -72,8 +72,8 @@ async def registered_frames(dut: HierarchyObject) -> None:
 	await _setup(dut)
 	source = AxiStreamSource(AxiStreamBus.bind(dut, prefix="s", last=True), "beat_clock")
 	sink = AxiStreamSink(AxiStreamBus.bind(dut, prefix="m", t_prefix=False, last=True), "beat_clock")
-	await source.reset()
-	await sink.reset()
+	await source.initialise()
+	await sink.initialise()
 	dut.allow_input.value = 1
 	lengths = [1, 3, 64, 1, 2, 31, 26]
 	frames = []
@@ -149,15 +149,15 @@ async def structured_frames(dut: HierarchyObject) -> None:
 	bus = await _setup(dut)
 	source = AxiStreamSource(bus, "beat_clock")
 	sink = AxiStreamSink(bus, "beat_clock")
-	await source.reset()
-	await sink.reset()
+	await source.initialise()
+	await sink.initialise()
 	values: list[PayloadValue] = [{"i": "XU00000000000001", "q": f"{index:016b}"} for index in range(8)]
 	results = await _loopback(source, sink, values)
 	assert [t.last for t in results] == [False] * 7 + [True]
 	for result, expected in zip(results, values, strict=True):
 		assert isinstance(result.data, Mapping) and isinstance(expected, Mapping)
 		assert {name: str(value) for name, value in result.data.items()} == expected
-	await source.reset()
+	await source.initialise()
 	# Clearing the wire and driving another frame cannot mutate earlier snapshots.
 	await _loopback(source, sink, [_value(42)])
 	assert isinstance(results[0].data, Mapping)
@@ -166,8 +166,8 @@ async def structured_frames(dut: HierarchyObject) -> None:
 	assert isinstance(bus.data, HierarchyObject)
 	custom_source = AxiStreamSource(bus, "beat_clock", payload=_IQPayload(bus.data))
 	custom_sink = AxiStreamSink(bus, "beat_clock", payload=_IQPayload(bus.data))
-	await custom_source.reset()
-	await custom_sink.reset()
+	await custom_source.initialise()
+	await custom_sink.initialise()
 	pairs = [(-32768 + index, 32767 - index) for index in range(32)]
 	sending = cocotb.start_soon(custom_source.send_frame(pairs))
 	frame = await custom_sink.recv_frame(max_transfers=32)
@@ -181,7 +181,7 @@ async def frame_backpressure(dut: HierarchyObject) -> None:
 	"""An independent receiver stalls every final beat and checks no bubbles."""
 	bus = await _setup(dut)
 	source = AxiStreamSource(bus, "beat_clock")
-	await source.reset()
+	await source.initialise()
 	lengths = [1, 5, 2, 9]
 	expected = [
 		(i, j == length - 1) for i, (length, j) in enumerate((length, j) for length in lengths for j in range(length))
@@ -238,7 +238,7 @@ async def frame_source_gaps(dut: HierarchyObject) -> None:
 	"""An independent source checks ready across source gaps and frame boundaries."""
 	bus = await _setup(dut)
 	sink = AxiStreamSink(bus, "beat_clock")
-	await sink.reset()
+	await sink.initialise()
 	results: list[list[AxiStreamTransfer[PayloadValue]]] = []
 
 	async def receive_all() -> None:
@@ -284,8 +284,8 @@ async def frame_validation(dut: HierarchyObject) -> None:
 		await source.send_frame([_value(1)])
 	with pytest.raises(EndpointStateError):
 		await sink.recv_frame()
-	await source.reset()
-	await sink.reset()
+	await source.initialise()
+	await sink.initialise()
 	start = get_sim_time(unit="step")
 	with pytest.raises(ValueError, match="at least one"):
 		await source.send_frame([])
@@ -311,7 +311,7 @@ async def frame_limit(dut: HierarchyObject) -> None:
 	"""Limit failure cleans up without accepting beat N+1 or draining."""
 	bus = await _setup(dut)
 	sink = AxiStreamSink(bus, "beat_clock")
-	await sink.reset()
+	await sink.initialise()
 	dut.sample_available.value = 1
 	dut.end_of_packet.value = 0
 	dut.iq_word_in["i"].value = 12
@@ -349,7 +349,7 @@ async def frame_limit(dut: HierarchyObject) -> None:
 		await sink.recv()
 	with pytest.raises(EndpointStateError):
 		await sink.recv_frame()
-	await sink.reset()
+	await sink.initialise()
 	# A local reset does not drain/re-align: the remaining frame is still here.
 	dut.end_of_packet.value = 1
 	assert [t.last for t in await sink.recv_frame(max_transfers=1)] == [True]
@@ -361,8 +361,8 @@ async def frame_remainder(dut: HierarchyObject) -> None:
 	bus = await _setup(dut)
 	source = AxiStreamSource(bus, "beat_clock")
 	sink = AxiStreamSink(bus, "beat_clock")
-	await source.reset()
-	await sink.reset()
+	await source.initialise()
+	await sink.initialise()
 	sending = cocotb.start_soon(source.send_frame([_value(i) for i in range(3)]))
 	first = await sink.recv()
 	assert first.last is False
@@ -379,8 +379,8 @@ async def frame_ownership(dut: HierarchyObject, direction: str) -> None:
 	bus = await _setup(dut)
 	source = AxiStreamSource(bus, "beat_clock")
 	sink = AxiStreamSink(bus, "beat_clock")
-	await source.reset()
-	await sink.reset()
+	await source.initialise()
+	await sink.initialise()
 
 	async def reject_overlap() -> None:
 		with pytest.raises(EndpointStateError, match="one operation"):
@@ -426,8 +426,8 @@ async def interrupted_frame(dut: HierarchyObject, direction: str, interruption: 
 	bus = await _setup(dut)
 	source = AxiStreamSource(bus, "beat_clock")
 	sink = AxiStreamSink(bus, "beat_clock")
-	await source.reset()
-	await sink.reset()
+	await source.initialise()
+	await sink.initialise()
 	dut.consumer_accepts.value = int(direction == "send")
 	dut.sample_available.value = 1 if direction == "recv" else 0
 	dut.end_of_packet.value = 0
@@ -468,7 +468,7 @@ async def interrupted_frame(dut: HierarchyObject, direction: str, interruption: 
 				await source.send_frame([_value(99)])
 			else:
 				await sink.recv_frame()
-	await endpoint.reset()
+	await endpoint.initialise()
 	# Recover without retransmitting the interrupted frame. A separate gated
 	# regression below exercises a delayed old abort against a new active token.
 	if direction == "send":
@@ -520,8 +520,8 @@ async def frame_failures(dut: HierarchyObject, direction: str, failure: str) -> 
 	payload.fail = failure == "adapter"
 	source = AxiStreamSource(bus, "beat_clock", payload=payload)
 	sink = AxiStreamSink(bus, "beat_clock", payload=payload)
-	await source.reset()
-	await sink.reset()
+	await source.initialise()
+	await sink.initialise()
 	dut.consumer_accepts.value = int(direction == "send")
 	dut.sample_available.value = 1 if direction == "recv" else 0
 	dut.end_of_packet.value = 0
@@ -572,7 +572,7 @@ async def frame_failures(dut: HierarchyObject, direction: str, failure: str) -> 
 		else:
 			await sink.recv_frame()
 	endpoint = source if direction == "send" else sink
-	await endpoint.reset()
+	await endpoint.initialise()
 	payload.fail = False
 	dut.consumer_accepts.value = 1
 	dut.end_of_packet.value = 1
@@ -613,7 +613,7 @@ async def frame_sequence_failures(dut: HierarchyObject) -> None:
 	"""Length preflight failure stays healthy; indexing failures preserve accepted prefixes."""
 	bus = await _setup(dut)
 	source = AxiStreamSource(bus, "beat_clock")
-	await source.reset()
+	await source.initialise()
 	start = get_sim_time(unit="step")
 	with pytest.raises(RuntimeError, match="length failure"):
 		await source.send_frame(_BrokenSequence(fail_length=True))
@@ -642,7 +642,7 @@ async def frame_sequence_failures(dut: HierarchyObject) -> None:
 		assert accepted == [(i, False) for i in range(fail_at)]
 		with pytest.raises(EndpointStateError):
 			await source.send_frame([_value(99)])
-		await source.reset()
+		await source.initialise()
 		await source.send_frame([_value(99)])
 
 
@@ -688,7 +688,7 @@ async def stale_frame_token(dut: HierarchyObject, direction: str) -> None:
 	source = _GatedSource(bus, gate)
 	sink = _GatedSink(bus, gate)
 	endpoint = source if direction == "send" else sink
-	await endpoint.reset()
+	await endpoint.initialise()
 	dut.consumer_accepts.value = int(direction == "send")
 	dut.sample_available.value = int(direction == "recv")
 	dut.iq_word_in["i"].value = 99
@@ -707,7 +707,7 @@ async def stale_frame_token(dut: HierarchyObject, direction: str) -> None:
 	old = cocotb.start_soon(old_frame())
 	await gate.entered.wait()
 	assert not old.done()
-	await endpoint.reset()
+	await endpoint.initialise()
 	if direction == "send":
 		replacement = cocotb.start_soon(source.send_frame([_value(99)]))
 	else:
@@ -743,8 +743,8 @@ async def frame_reuse_guards(dut: HierarchyObject, direction: str, phase: str) -
 	bus = await _setup(dut)
 	source = AxiStreamSource(bus, "beat_clock")
 	sink = AxiStreamSink(bus, "beat_clock")
-	await source.reset()
-	await sink.reset()
+	await source.initialise()
+	await sink.initialise()
 	dut.consumer_accepts.value = int(direction == "send")
 	dut.sample_available.value = int(direction == "recv")
 	dut.end_of_packet.value = 1

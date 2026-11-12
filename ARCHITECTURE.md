@@ -13,8 +13,8 @@ The initial AXI-Stream implementation supports individual transfers and complete
 frames, all AXI4-Stream transfer sidebands, and interleaved packet assembly.
 The agreed target is AXI4-Stream only, excluding AXI5-Stream wake-up/parity.
 Data/ready omissions and continuous queued capture without ready are supported.
-AXI4 memory-mapped, AXI4-Lite and automatic reset-pin monitoring are not implemented.
-The current subset is not yet the full-standard target.
+Optional reset-pin monitoring supports active-low and active-high interfaces.
+AXI4 memory-mapped and AXI4-Lite are not implemented.
 
 ## Components
 
@@ -47,7 +47,7 @@ The current subset is not yet the full-standard target.
   to sustain one accepted transfer per rising edge when data and ready permit.
   Reuse requires both the recorded completion time (in simulator steps) and
   `current_gpi_trigger()` to identify that clock's falling-edge callback.
-  Other simulator phases, later times, reset and failures invalidate reuse.
+  Other simulator phases, later times, initialisation, pin assertion and failures invalidate reuse.
   Cleanup writes can be superseded on the same edge; valid/ready need not pulse
   low between calls. Initial calls still wait for a fresh falling edge.
 
@@ -76,7 +76,7 @@ Last exactly at the limit succeeds. Without last at that length, a ready-backed
 sink deasserts ready at cleanup and raises ValueError with no extra acceptance
 or draining. A no-ready sink stops capture, discarding undelivered traffic.
 A retained prefix already at the limit fails before consuming further snapshots.
-Reset, cancellation and in-progress faults discard partial packet assembly.
+Initialisation, pin assertion, cancellation and in-progress faults discard partial packet assembly.
 Without ready, a length error stops capture but cannot prevent physical acceptance.
 
 Public single/frame operations acquire one ownership token, share private
@@ -84,15 +84,15 @@ token-aware per-transfer routines, and release only after final cleanup.
 Per-transfer cleanup records the reusable edge without releasing ownership.
 This preserves full rate within/across frames and mixed single/frame calls.
 The outer failure handler invalidates only its own token, so an interrupted
-old frame cannot invalidate newer work after reset. Preflight argument failures
+old frame cannot invalidate newer work after initialisation or pin reset. Preflight argument failures
 do not acquire ownership or alter endpoint state. In-progress errors (including
-sequence indexing or frame limits) and cancellation require reset. A receive
+sequence indexing or frame limits) and cancellation require initialise(). A receive
 starts at the next accepted transfer, possibly partway through an existing
-frame; local reset restores outputs but does not restore frame alignment.
+frame; local initialisation restores outputs but does not restore frame alignment.
 
 ### No-ready capture
 
-After successful reset cleanup, a no-ready sink starts a generation-owned cocotb
+After successful initialisation, a no-ready sink starts a generation-owned cocotb
 task. Every valid rising edge snapshots data/last/sidebands immediately, before
 HDL updates. The accepted snapshot counts towards retention immediately and is
 published to a deque at the following falling edge. A waiting receive wakes then;
@@ -109,9 +109,9 @@ a finite capacity is rejected for ready-backed sinks.
 OverflowError or an ordinary capture exception is observed and latched inside the
 collector, stopping it and waking receivers. Receives check the fault before
 dequeue/delivery, so older backlog cannot hide an error. The fault remains until
-reset/close. No unobserved background exception is used for notification.
-Foreground receive cancellation/failure also stops capture and requires reset.
-Reset clears retained state and faults before yielding; successful cleanup starts
+initialise()/close(). No unobserved background exception is used for notification.
+Foreground receive cancellation/failure also stops capture and requires initialise().
+Initialisation clears retained state and faults before yielding; successful cleanup starts
 a new collector. Invalidating a generation precedes task cancellation, and all
 post-edge publication/finalisation is generation-guarded. Old foreground tasks
 are also token-guarded before retiring counts or changing assembly.
@@ -119,23 +119,67 @@ Wake-up events are replaced after notification to avoid stale-set busy loops.
 
 `await sink.close()` stops capture, invalidates pending operations and discards
 queued/partial state, with no clock edge needed on no-ready sinks. A ready-backed
-sink also clears ready at a falling edge. Close is repeatable; reset/close may
-not overlap, and reset is required to restart. Captures before initial reset or
+sink also clears ready at a falling edge. Close is repeatable; initialise/close may
+not overlap, and initialise() is required to restart. Captures before initialisation or
 while stopped are unavailable. Stopping capture cannot backpressure physical
-traffic. Pending no-ready receives are woken with TransferReset on close/reset;
+traffic. Pending no-ready receives are woken with TransferReset on close/initialisation;
 spawned receivers must observe that exception internally.
 
+### Local lifecycle and reset monitoring
+
 The source owns data, valid, last and all selected sidebands; the sink owns ready
-and its partial packet assembly. Explicit `reset()`
-invalidates pending work and clears owned outputs at a falling edge. Failed or
-cancelled operations require reset. Local recovery cannot undo a transfer
-already accepted by the DUT and must be coordinated with DUT reset. Spawned
-transfer coroutines must catch `TransferReset` internally when reset may
-interrupt them; cocotb can fail a test on an unobserved task exception before a
-later await observes it.
+and its partial packet assembly. `initialise()` replaces the former `reset()`
+method. It invalidates pending work and performs local recovery without driving
+the DUT reset pin. Without a pin it clears owned outputs at a falling edge.
+Errors/cancellation require successful explicit initialisation. Local recovery
+cannot undo accepted traffic, empty DUT buffers or restore packet alignment.
+
+Both endpoints accept keyword-only `reset: Signal | None = None` and
+`reset_active_high: bool = False`. Binding is independent of bus naming defaults,
+accepting exact names and one-bit handles (including non-zero vector indices).
+Polarity is not inferred. Literal pin 0/1 values are required. Construction
+is non-driving; monitoring begins with initialise() and ends with close().
+
+The base endpoint owns a reset watcher and a generation-guarded pin-cycle task.
+Every observed pin change invalidates release eligibility and pending work,
+stops capture and discards retained snapshots/packets before deferred cleanup.
+Owned outputs clear without a clock edge; ReadOnly defers clearing by a
+scheduled one-simulator-step Timer. Every delayed continuation rechecks monitor
+and cycle ownership before writing. Source valid/last clear first, and sideband
+cleanup is attempted even if the custom payload adapter fails.
+
+For an inactive pin, the cycle task waits for rising R0, rising R1 and falling F1.
+Eligibility begins at F1, so the earliest acceptance is R2. Reassertion replaces
+this cycle. Deassertion must be synchronous after a rising edge; this conservative
+release gate follows Arm IHI 0051B §2.8.2 with configurable polarity and does not
+implement a synchroniser. A healthy pin-only interruption recovers automatically,
+including no-ready capture. New calls while unavailable reject rather than queue.
+
+Per-operation tokens carry an interruption event and error. Pin-aware waits
+race the clock edge against that event, then check ownership and synchronously
+inspect the pin before driving or sampling. This wakes stalled operations even
+with a stopped clock. No-pin edge waits retain their direct trigger path.
+Pin-aware registered-DUT regressions verify pre-update samples and full rate.
+
+Manual-recovery state is separate from pin eligibility: earlier cancellation,
+foreground errors, overflow and capture faults cannot be acknowledged by a pin
+cycle. Invalid reset values latch ProtocolValueError; asynchronous cleanup
+failures latch their exception. The first fault is retained until explicit
+initialise()/close(), and exceptions are delivered through foreground operations
+rather than unobserved monitor tasks. Cancelled initialisation leaves monitoring
+armed for safety but manual recovery required. Initialisation waits through
+assertion/release and can block indefinitely without a running clock or release.
+
+Both source and sink expose close(). It invalidates work, stops monitoring/capture
+and clears retained faults/state. Source/ready-backed sink outputs clear at a
+falling edge; no-ready sinks need no clock. A failed/cancelled close remains
+closed. Pin activity cannot reopen it; explicit initialise() rearms monitoring.
+Initialise and close are mutually exclusive. Spawned operation coroutines must
+catch TransferReset internally when initialisation, pin assertion or close may
+interrupt them; cocotb may fail on an unobserved exception before a later await observes it.
 
 Every clock must contain only literal 0/1 values from before the first endpoint
-reset onwards. Weak L/H and unresolved clock values are unsupported. This is a
+initialisation onwards. Weak L/H and unresolved clock values are unsupported. This is a
 caller precondition, without runtime clock monitoring. The endpoints use
 cocotb's raw rising/falling-edge triggers, whose behaviour for non-0/1 clocks
 can differ from VHDL `rising_edge`/`falling_edge`.
@@ -143,7 +187,7 @@ can differ from VHDL `rising_edge`/`falling_edge`.
 Payload meta-values are preserved. Sampled handshake controls and accepted last
 must be exactly 0 or 1. Explicit numeric helpers reject unresolved values even
 when cocotb's environment would otherwise resolve them. Routine transfer and
-reset messages use the `coaxi.stream` logger at DEBUG level.
+initialisation and reset messages use the `coaxi.stream` logger at DEBUG level.
 
 ## Signal binding
 
@@ -189,28 +233,28 @@ a caller's name.
   rejection of specialised endpoints without adapters, and generic frame method
   input/result types using default Pyrefly.
 - `tests/stream_cases.py` contains cocotb cases for binding, vector/record
-  payloads, framing, timing, backpressure, reset and cancellation. Recovery
+  payloads, framing, timing, backpressure, local initialisation and cancellation. Recovery
   cases include interruption between acceptance and cleanup, cancellation of
-  reset, and injected adapter drive/read/clear failures. DUT counters verify
+  initialisation, and injected adapter drive/read/clear failures. DUT counters verify
   that interruption does not undo a previously accepted transfer.
 - `tests/full_rate_cases.py` measures acceptance cycle spacing through the
   registered DUT and on direct vector/record buses, including custom adapters.
   Independent peers check backpressure stability and continuous ready across
   source gaps; other cases check simulator-phase/time guards and chained
   failures. Interrupted full-rate receives cover adapter failure, cancellation
-  and local reset after acceptance, preserving the DUT's buffered next value.
+  and local initialisation after acceptance, preserving the DUT's buffered next value.
 - `tests/frame_cases.py` covers frame-wide ownership, singleton/multiple frames,
   full-rate intra/inter-frame and mixed API boundaries, independent peers with
   source gaps/final-beat stalls, record/meta-value/custom payload snapshots,
   optional-limit boundaries, preflight validation and incomplete-frame recovery.
   Interruptions cover intermediate/final acceptance before cleanup, stale tasks
-  after reset, adapter/control failures and sequence access failures.
+  after initialisation, adapter/control failures and sequence access failures.
 - `tests/sideband_cases.py` checks default/mixed/direct bindings, qualifier width
   and record restrictions, unchanged bare-bones usage, defaults with omitted
   signals, scalar qualifier handles and wide identifiers. The registered DUT
   carries all sidebands; 128-beat tests check snapshots before HDL updates and
   consecutive acceptance cycles. Independent peers check backpressure, reserved
-  qualifier faults, metadata preflight validation and reset ownership. Packet
+  qualifier faults, metadata preflight validation and initialisation ownership. Packet
   cases cover id/dest demultiplexing, completion order, per-packet metadata,
   null final beats, retained-prefix limits, cancellation and raw wire order.
 - `tests/omission_cases.py` covers all four data/ready combinations, data-less
@@ -219,13 +263,20 @@ a caller's name.
   beat per rising edge, pre-update snapshots, live cleanup timing and immediate
   backlog dequeue. Capacity tests include partial packets and in-flight values;
   faults are delivered error-first while idle/waiting. Recovery cases cover
-  reset/cancel/close, stale receivers/collectors and close with a stopped clock.
+  initialise/cancel/close, stale receivers/collectors and close with a stopped clock.
   Records/meta-values, packet limits and mixed raw/frame retirement are covered.
 - `tests/handle_cases.py` exercises scalar payloads with one-bit vector controls
   and a one-bit vector clock, using both ascending and descending non-zero
   indices. It checks full-rate frames, independent scalar snapshots, deliberate
-  payload meta-values, scalar validation, backpressure, control faults and reset
-  ownership.
+  payload meta-values, scalar validation, backpressure, control faults and
+  initialisation ownership.
+- `tests/reset_pin_cases.py` covers both polarities, exact names and one-bit vector
+  reset handles, asynchronous clearing/stopped-clock interruption, R0/R1/F1/R2
+  release timing and reassertion during release. It checks 128-beat registered
+  full-rate packet traffic, error-first overflow preservation across invalid
+  pin values, deferred ReadOnly cleanup, cancelled initialisation, shutdown/rearm,
+  accepted-before-interruption traffic and stale foreground tasks. It also verifies
+  that cancellation and first faults survive pin cycling and adapter-clear errors.
 - `tests/hdl/stream_dut.vhd` is the VHDL-2008 DUT, including a registered stream
   path, a two-field signed IQ record and undriven scalar/vector-control signals.
 - `examples/stream_loopback.py` is a bounded cocotb usage example for unframed

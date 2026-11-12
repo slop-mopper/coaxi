@@ -72,8 +72,8 @@ absent handle. No sidebands need to be selected for bare-bones usage.
 
 ## Sending and receiving
 
-Start the clock before awaiting either endpoint's initial `reset()`. Every clock
-must contain only literal 0/1 values from before the first endpoint reset onwards;
+Start the clock before awaiting either endpoint's initial `initialise()`. Every clock
+must contain only literal 0/1 values from before the first endpoint initialisation onwards;
 weak L/H and X/U/Z/etc. clock values are unsupported. This is a caller precondition:
 endpoints do not monitor clocks for invalid values. Cocotb's raw edge triggers
 can differ from VHDL `rising_edge`/`falling_edge` for non-0/1 values.
@@ -96,8 +96,8 @@ async def loopback(dut: HierarchyObject) -> None:
 	bus = AxiStreamBus.bind(dut, prefix="plain", t_prefix=False)
 	source = AxiStreamSource(bus, clock="beat_clock")
 	sink = AxiStreamSink(bus, clock="beat_clock")
-	await source.reset()
-	await sink.reset()
+	await source.initialise()
+	await sink.initialise()
 
 	sending = cocotb.start_soon(source.send(42))
 	transfer = await sink.recv()
@@ -140,8 +140,8 @@ for a frame. The received `data` is `None`. Sidebands remain independent:
 bus = AxiStreamBus.bind(dut, prefix="events", data=False, ready=False, last=True)
 source = AxiStreamSource(bus, clock="beat_clock")
 sink = AxiStreamSink(bus, clock="beat_clock")
-await source.reset()
-await sink.reset()
+await source.initialise()
+await sink.initialise()
 try:
 	await source.send_frame([None, None])  # No receiver call is needed to accept.
 	frame = await sink.recv_frame()
@@ -151,7 +151,7 @@ finally:
 ```
 
 Without ready, every valid rising edge accepts a transfer. Successful initial
-`sink.reset()` starts a background collector; it continues while Python is idle.
+`sink.initialise()` starts a background collector; it continues while Python is idle.
 It snapshots the payload and sidebands before clocked HDL updates and makes the
 snapshot available at the following falling edge. A waiting receive therefore
 retains the existing falling-edge completion timing. Already-buffered transfers
@@ -163,9 +163,9 @@ Use `await sink.close()` when capture is no longer needed. It stops capture,
 invalidates pending receives with `TransferReset` and discards all retained
 traffic. Closing a no-ready sink needs no clock edge; closing a ready-backed
 sink clears ready at a falling edge. Repeated closes are safe. A subsequent
-`reset()` restarts the sink. Reset/close must not overlap. Catch `TransferReset`
+`initialise()` restarts the sink. Initialisation/close must not overlap. Catch `TransferReset`
 inside any spawned receive that shutdown can interrupt. Traffic accepted before
-initial reset or while capture is stopped cannot be recovered.
+initialisation or while capture is stopped cannot be recovered.
 
 No-ready buffering is unlimited by default. An optional positive
 `buffer_capacity` on `AxiStreamSink(...)` counts **all retained, undelivered
@@ -177,10 +177,10 @@ Overflow raises `OverflowError`; it cannot prevent physical acceptance.
 Overflow or a payload/control/qualifier capture error stops the collector.
 The current or next receive raises the original exception **before returning
 older buffered data**, without an unobserved background task exception.
-Further receives keep reporting that fault until local recovery. Reset discards
+Further receives keep reporting that fault until local recovery. `initialise()` discards
 the queue, partial packets and fault, and restarts capture. Close also discards
 them but leaves capture stopped. Cancellation, frame-limit failure and other
-in-progress receive failures stop capture and require reset. Argument errors or
+in-progress receive failures stop capture and require `initialise()`. Argument errors or
 a rejected competing receive do not disturb existing capture.
 
 ### Full-rate transfers
@@ -211,7 +211,7 @@ To sustain full rate, use separate sending/receiving coroutines and start each
 next call immediately, without advancing simulation time or awaiting a different
 simulator phase. `ReadOnly()`, `ReadWrite()` or a delay between calls can introduce
 idle cycles: the next call then waits for a fresh falling edge before driving.
-Initial reset and the first transfer also wait for their own falling edges.
+Initialisation without a reset pin and the first transfer wait for their own falling edges.
 Normal Python processing without a simulator wait does not consume a clock cycle.
 
 ## Framing and payloads
@@ -266,16 +266,16 @@ the helper raises `ValueError` without returning a partial frame, draining or
 retrying. On a ready-backed bus it first clears ready at the falling-edge
 cleanup, accepting no extra transfer. Without ready, it stops capture; later
 transfers might already be buffered, and physical acceptance cannot be prevented.
-Reset is then required. Both an unlimited receive and a length-limited receive
+`initialise()` is then required. Both an unlimited receive and a length-limited receive
 need a simulation-time timeout for stalled traffic; a missing last with the
 default limit can also grow memory without bound. The limit applies to retained
 prefixes too: selecting a limit already reached by a retained unfinished packet
 raises before consuming further transfers. There is no bound on the number of
-unfinished streams unless a no-ready `buffer_capacity` is set. Reset,
-cancellation and in-progress failures discard partial assembly.
+unfinished streams unless a no-ready `buffer_capacity` is set. Pin assertion,
+initialisation, cancellation and in-progress failures discard partial assembly.
 
 Both helpers require last. Absent last, empty/non-sequence send input and invalid
-limits are rejected before wire activity and do not themselves require reset.
+limits are rejected before wire activity and do not themselves require initialisation.
 A frame operation reserves its endpoint through every transfer and final cleanup;
 overlapping single-transfer or frame calls raise `EndpointStateError`. Frame
 helpers share the individual-transfer timing and sustain full rate within frames
@@ -283,8 +283,8 @@ and between immediately consecutive calls, including mixed single/frame calls.
 
 Collection begins at the next accepted transfer. Last marks the end, not the
 start, so a frame receive after individual receives returns the remaining suffix.
-In-progress failures, cancellation or reset can leave an accepted prefix or even
-an entire frame on the peer. There is no rollback or automatic retry. Local reset
+In-progress failures, cancellation or pin assertion can leave an accepted prefix or even
+an entire frame on the peer. There is no rollback or automatic retry. Local initialisation
 restores owned outputs but **does not restore frame alignment**; coordinated
 recovery with the peer or DUT may be necessary.
 
@@ -295,7 +295,7 @@ The basic API stays unchanged:
 ```python
 bus = AxiStreamBus.bind(dut, prefix="samples")
 source = AxiStreamSource(bus, clock="clock")
-# After reset, with a cooperating peer:
+# After initialisation, with a cooperating peer:
 await source.send(42)
 ```
 
@@ -307,7 +307,7 @@ from coaxi import AxiStreamSidebands
 
 bus = AxiStreamBus.bind(dut, prefix="samples", last=True, keep=True, user="flags")
 source = AxiStreamSource(bus, clock="clock")
-# After reset, with a cooperating peer:
+# After initialisation, with a cooperating peer:
 await source.send(0x1234, last=True, sidebands=AxiStreamSidebands(keep=1, user=5))
 ```
 
@@ -359,7 +359,7 @@ await source.send_frame([0x1234, 0x0056], sidebands=metadata)
 
 Keep/strb/user may vary within a packet; id/dest must remain constant.
 A later invalid entry can fail after a prefix has already been accepted, requiring
-reset. Use individual `send()` calls to deliberately interleave different streams.
+initialisation. Use individual `send()` calls to deliberately interleave different streams.
 The existing `send_frame`/`recv_frame` names denote a packet ending in last; the
 AXI4-Stream specification also uses “frame” for application groupings of packets.
 
@@ -388,7 +388,7 @@ writing any leaf. Unsupported handle types require a custom adapter.
 reject unresolved X/U/Z/etc. even if cocotb is configured to resolve them;
 weak L/H bits remain resolvable. Payload X/U/etc. are otherwise retained.
 Driving meta-values is supported for deliberate propagation or fault-injection
-tests; ordinary reset clears them to zero. Sampled valid, ready and accepted
+tests; initialisation and pin assertion clear owned leaves to zero. Sampled valid, ready and accepted
 last must be exactly 0 or 1, including rejection of weak L/H control values.
 
 Default endpoint typing is `PayloadValue | None`; `PayloadValue` itself remains
@@ -405,43 +405,109 @@ raising; recovery does not roll those writes back. The sink never calls the
 payload's `clear`, since it does not own incoming data. Do not mutate a value
 passed to `send` or `send_frame` until that call finishes.
 
-## Reset, errors and cancellation
+## Initialisation, reset pins, errors and cancellation
 
-Always await `reset()` initially and after an in-progress operation fails or is
+Always await `initialise()` initially and after an in-progress operation fails or is
 cancelled, including frame length errors. Preflight argument errors are exempt.
-Source reset clears valid, last, every bound sideband and all owned payload
-leaves; sink reset clears ready and all retained queued/partial packet state.
-No-ready capture stops immediately on reset and restarts after successful cleanup.
-Outputs clear at a falling edge, so reset also needs a running clock.
-A failed or cancelled reset leaves the endpoint unusable until reset succeeds.
-Reset is explicit local recovery; there is no automatic reset-pin monitoring.
+This replaces the former `reset()` method: **it never drives the DUT reset pin**.
+It invalidates pending operations, clears local state and owned outputs, and waits
+until the endpoint is eligible for traffic. Construction remains non-driving.
 
-Local reset invalidates pending operations with `TransferReset`. When reset
-may interrupt a spawned operation, catch this exception **inside that coroutine**;
-cocotb can fail a test on an unobserved task exception before a later await
-observes it. Concurrent operations on one endpoint, overlapping reset calls, and
-operations started while reset is active raise `EndpointStateError`. Reset may
-interrupt an active transfer or frame. Invalid sampled controls raise `ProtocolValueError`,
-and invalid bindings raise
+Without a reset pin, initialisation clears outputs at a falling edge. Source
+initialisation clears valid, last, every bound sideband and all owned payload
+leaves; sink initialisation clears ready and retained queue/packet state.
+No-ready capture stops immediately and restarts after successful initialisation.
+A failed or cancelled initialisation leaves manual recovery required.
+
+### Optional monitored reset pin
+
+```python
+source = AxiStreamSource(
+	bus,
+	clock="clk",
+	reset="my_reset",
+	reset_active_high=True,
+)
+await source.initialise()
+```
+
+Both endpoints accept optional keyword-only `reset` and `reset_active_high`.
+`reset` is an exact arbitrary signal name or an already-bound one-bit logic handle;
+one-bit vectors with arbitrary indices are supported. It is absent by default,
+with no discovery. `reset_active_high=True` selects active-high; the default
+`False` selects standard AXI active-low. Polarity is never inferred from the name.
+Reset and clock must be distinct and must not alias any bus signal.
+
+`initialise()` starts monitoring. On assertion, without waiting for a clock edge:
+
+- Invalidate active operations with `TransferReset`.
+- Stop no-ready capture and discard retained transfers and incomplete packets.
+- Clear owned outputs at the first writable opportunity, even with the clock stopped.
+
+If assertion is observed in `ReadOnly`, clearing is deferred by one simulator
+step, with ownership checked again before writes. Valid/ready and sidebands
+are cleared even if a custom payload adapter fails to clear its data.
+As with explicit recovery, already-accepted traffic cannot be undone.
+
+Release uses the configured **inactive** level: low for active-high, high for
+active-low. Let **R0** be the first rising edge sampling that inactive level,
+and **R1** the following rising edge. The endpoint becomes available at the
+falling edge after R1 (**F1**); its earliest subsequent acceptance is **R2**.
+Reassertion restarts this gate. New transfer calls during assertion or release
+raise `EndpointStateError`, rather than queueing. A healthy endpoint resumes
+automatically after a pin-only interruption, including restarting no-ready capture.
+Interrupted calls are not retried automatically.
+
+The caller must deassert reset synchronously after a rising edge. This gate is
+a conservative implementation of the release interval in Arm IHI 0051B §2.8.2,
+adapted to the selected polarity; it is not a reset synchroniser.
+`initialise()` waits through asserted reset and this release interval, so it can
+wait indefinitely if reset stays asserted or the clock stops. Use bounded tests.
+
+Literal reset `0/1` values are required. X/U/Z/etc. and weak L/H latch
+`ProtocolValueError` and stop traffic. Capture faults, overflow and previously
+recorded cancellation/failure remain manual-recovery conditions: pin cycling
+does not acknowledge them. The first latched fault is preserved across pin
+changes and cleanup failures until explicit `initialise()` or `close()`.
+Successful explicit initialisation requires a valid pin and release interval.
+If initialisation is cancelled, monitoring still enforces output safety, but
+pin release cannot enable transfers until a later successful `initialise()`.
+
+### Close and interrupted operations
+
+`await source.close()` and `await sink.close()` stop monitoring and capture,
+invalidate operations and discard retained state. Source/ready-backed sink
+outputs clear at a falling edge; a no-ready sink closes without a clock edge.
+Repeated closes are safe. Pin changes cannot reopen a closed endpoint:
+explicit `initialise()` rearms it. A failed or cancelled close leaves it closed
+but may leave driven outputs awaiting cleanup. Initialisation and close must
+not overlap.
+
+Pin assertion, local initialisation and close invalidate pending work with
+`TransferReset`. Catch it **inside any spawned coroutine** that can be
+interrupted; cocotb can fail a test on an unobserved task exception before a
+later await observes it. Invalid reset values can instead report the latched
+`ProtocolValueError`. Concurrent operations on one endpoint, overlapping
+initialisation/close calls, or calls while unavailable raise `EndpointStateError`.
+Invalid sampled controls raise `ProtocolValueError`; invalid bindings raise
 `SignalBindingError`.
 
-Neither cancellation nor local reset can undo a transfer already accepted at a
+Neither cancellation nor local initialisation can undo a transfer accepted at a
 rising edge. Interruption can occur after acceptance but before cleanup returns,
 so **do not blindly retry an interrupted transfer**: it could duplicate data.
-Cancellation leaves driven outputs for explicit reset recovery. Coordinate
-recovery with DUT reset during active traffic; local reset does not reset the
-DUT or discard its buffered transfers.
+Cancellation leaves driven outputs for explicit recovery, unless pin monitoring
+subsequently clears them. Coordinate with DUT reset during active traffic:
+local initialisation does not reset the DUT, empty its buffers or restore packet alignment.
 
 ## Current scope
 
 The target is **AXI4-Stream**, excluding AXI5-Stream wake-up/parity extensions.
-The implemented subset supports data/ready omissions, explicit optional
-last/keep/strb/user/id/dest, continuous no-ready capture and interleaved packet
-assembly. Frame helpers require last; unframed traffic uses individual transfers.
-Automatic protocol reset-pin monitoring remains to be implemented.
-This is not yet full-standard support.
-The timing model targets event-driven simulators and is tested
-with `nvc`; no support for other simulator timing models is claimed.
+The implementation supports data/ready omissions, explicit optional
+last/keep/strb/user/id/dest, continuous no-ready capture, interleaved packet
+assembly and optional monitored reset pins with configurable polarity.
+Frame helpers require last; unframed traffic uses individual transfers.
+The timing model targets event-driven simulators and is tested with `nvc`;
+no support for other simulator timing models is claimed.
 
 ## Development
 

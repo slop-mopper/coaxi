@@ -16,8 +16,8 @@ import pytest
 def test_constructor_types(tmp_path: Path, endpoint: str, scenario: str) -> None:
 	"""Check endpoint's scenario in a temporary source file below tmp_path."""
 	statements = {
-		"default": f"assert_type({endpoint}(bus, clock), {endpoint}[PayloadValue | None])",
-		"custom": f"assert_type({endpoint}(bus, clock, payload=payload), {endpoint}[int])",
+		"default": f"assert_type({endpoint}(bus, clock, reset=reset, reset_active_high=True), {endpoint}[PayloadValue | None])",
+		"custom": f"assert_type({endpoint}(bus, clock, payload=payload, reset=reset, reset_active_high=False), {endpoint}[int])",
 		"missing": f"{endpoint}[int](bus, clock)",
 	}
 	statement = statements[scenario]
@@ -28,7 +28,7 @@ def test_constructor_types(tmp_path: Path, endpoint: str, scenario: str) -> None
 		"# This file was created by an AI model: openai/gpt-6.1-sol\n"
 		"from typing import assert_type\n"
 		f"from coaxi import {endpoint}, AxiStreamBus, Payload, PayloadValue, Signal\n"
-		"def check(bus: AxiStreamBus, clock: Signal, payload: Payload[int]) -> None:\n"
+		"def check(bus: AxiStreamBus, clock: Signal, reset: Signal, payload: Payload[int]) -> None:\n"
 		f"\t{statement}\n",
 		encoding="utf-8",
 	)
@@ -75,7 +75,11 @@ def test_frame_types(tmp_path: Path, scenario: str) -> None:
 		f"\tassert_type(await sink.recv_frame(max_transfers=3), list[AxiStreamTransfer[{value_type}]])\n"
 		f"\tassert_type(await source.send_frame({samples}, sidebands=[AxiStreamSidebands(user=3)]), None)\n"
 		"\tassert_type((await sink.recv()).keep, Logic | LogicArray | None)\n"
-		"\tassert_type((await sink.recv()).id, Logic | LogicArray | None)\n",
+		"\tassert_type((await sink.recv()).id, Logic | LogicArray | None)\n"
+		"\tassert_type(await source.initialise(), None)\n"
+		"\tassert_type(await sink.initialise(), None)\n"
+		"\tassert_type(await source.close(), None)\n"
+		"\tassert_type(await sink.close(), None)\n",
 		encoding="utf-8",
 	)
 	checker = Path(sys.executable).with_name("pyrefly")

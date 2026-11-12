@@ -62,6 +62,7 @@ def test_distribution(tmp_path: Path) -> None:
 			"tests/handle_cases.py",
 			"tests/sideband_cases.py",
 			"tests/omission_cases.py",
+			"tests/reset_pin_cases.py",
 			"tests/hdl/stream_dut.vhd",
 			"examples/stream_loopback.py",
 			*[f"src/coaxi/{name}" for name in package_files],
@@ -111,6 +112,12 @@ else:
 assert inspect.iscoroutinefunction(coaxi.AxiStreamSource.send_frame)
 assert inspect.iscoroutinefunction(coaxi.AxiStreamSink.recv_frame)
 assert inspect.iscoroutinefunction(coaxi.AxiStreamSink.close)
+assert inspect.iscoroutinefunction(coaxi.AxiStreamSource.close)
+for endpoint in (coaxi.AxiStreamSource, coaxi.AxiStreamSink):
+	assert inspect.iscoroutinefunction(endpoint.initialise)
+	assert not hasattr(endpoint, "reset")
+	assert inspect.signature(endpoint).parameters["reset"].default is None
+	assert inspect.signature(endpoint).parameters["reset_active_high"].default is False
 assert inspect.signature(coaxi.AxiStreamSink).parameters["buffer_capacity"].default is None
 assert inspect.signature(coaxi.AxiStreamSink.recv_frame).parameters["max_transfers"].default is None
 """

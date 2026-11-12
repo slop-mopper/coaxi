@@ -118,8 +118,8 @@ async def registered_transfers(dut: HierarchyObject) -> None:
 	await _setup(dut)
 	source = AxiStreamSource(AxiStreamBus.bind(dut, prefix="s", last=True), "beat_clock")
 	sink = AxiStreamSink(AxiStreamBus.bind(dut, prefix="m", t_prefix=False, last=True), dut.beat_clock)
-	await source.reset()
-	await sink.reset()
+	await source.initialise()
+	await sink.initialise()
 	values = [(index * 71, index % 5 == 4) for index in range(30)]
 
 	async def send_all() -> None:
@@ -160,8 +160,8 @@ async def unframed_transfers(dut: HierarchyObject) -> None:
 		await source.send(1)
 	with pytest.raises(EndpointStateError):
 		await sink.recv()
-	await source.reset()
-	await sink.reset()
+	await source.initialise()
+	await sink.initialise()
 	with pytest.raises(ValueError, match="bound last"):
 		await source.send(1, last=False)
 	framed = AxiStreamSource(_record(dut), "beat_clock")
@@ -184,8 +184,8 @@ async def record_payloads(dut: HierarchyObject) -> None:
 	await _setup(dut)
 	bus = _record(dut)
 	source, sink = AxiStreamSource(bus, "beat_clock"), AxiStreamSink(bus, "beat_clock")
-	await source.reset()
-	await sink.reset()
+	await source.initialise()
+	await sink.initialise()
 	values: list[PayloadValue] = [
 		{"i": LogicArray.from_signed(-321, 16), "q": LogicArray.from_signed(123, 16)},
 		{"i": "XU00000000000001", "q": "00000000000000UZ"},
@@ -204,7 +204,7 @@ async def record_payloads(dut: HierarchyObject) -> None:
 	assert str(snapshots[1]["q"]) == "00000000000000UZ"
 	with pytest.raises(ValueError, match="unresolved"):
 		to_unsigned(_array(snapshots[1]["i"]))
-	await source.reset()
+	await source.initialise()
 	await ReadOnly()
 	assert int(dut.iq_word_in["i"].value) == 0
 	assert int(dut.iq_word_in["q"].value) == 0
@@ -245,8 +245,8 @@ async def application_payload(dut: HierarchyObject) -> None:
 	assert isinstance(handle, HierarchyObject)
 	source = AxiStreamSource(bus, "beat_clock", payload=_IQPayload(handle))
 	sink = AxiStreamSink(bus, "beat_clock", payload=_IQPayload(handle))
-	await source.reset()
-	await sink.reset()
+	await source.initialise()
+	await sink.initialise()
 	task = cocotb.start_soon(source.send(_IQ(-32768, 32767), last=False))
 	result = await sink.recv()
 	await task
@@ -261,31 +261,31 @@ async def meta_controls(dut: HierarchyObject) -> None:
 	bus = _plain(dut)
 	source, sink = AxiStreamSource(bus, "beat_clock"), AxiStreamSink(bus, "beat_clock")
 	for meta in ("X", "U", "Z", "W", "L", "H", "-"):
-		await source.reset()
+		await source.initialise()
 		dut.plain_ready.value = meta
 		with pytest.raises(ProtocolValueError, match="ready"):
 			await source.send("XU000001")
 		with pytest.raises(EndpointStateError):
 			await source.send(0)
-		await source.reset()
+		await source.initialise()
 		await ReadOnly()
 		assert int(dut.plain_data.value) == 0
 		await FallingEdge(dut.beat_clock)
 		dut.plain_valid.value = meta
-		await sink.reset()
+		await sink.initialise()
 		with pytest.raises(ProtocolValueError, match="valid"):
 			await sink.recv()
 		await FallingEdge(dut.beat_clock)
 		dut.plain_valid.value = 0
 	framed = AxiStreamSink(_record(dut), "beat_clock")
-	await framed.reset()
+	await framed.initialise()
 	dut.sample_available.value = 1
 	dut.end_of_packet.value = "X"
 	with pytest.raises(ProtocolValueError, match="last"):
 		await framed.recv()
 	await FallingEdge(dut.beat_clock)
 	dut.sample_available.value = 0
-	await framed.reset()
+	await framed.initialise()
 	task = cocotb.start_soon(framed.recv())
 	await Timer(22, unit="ns")  # Last X is irrelevant while valid is zero.
 	assert not task.done()
@@ -302,13 +302,13 @@ async def reset_and_busy(dut: HierarchyObject) -> None:
 	await _setup(dut)
 	bus = _plain(dut)
 	source, sink = AxiStreamSource(bus, "beat_clock"), AxiStreamSink(bus, "beat_clock")
-	await source.reset()
-	await sink.reset()
+	await source.initialise()
+	await sink.initialise()
 	task = cocotb.start_soon(_capture(source.send("XU000001")))
 	await Timer(12, unit="ns")
 	with pytest.raises(EndpointStateError, match="one operation"):
 		await source.send(1)
-	await source.reset()
+	await source.initialise()
 	assert isinstance(await task, TransferReset)
 	await ReadOnly()
 	assert int(dut.plain_data.value) == 0
@@ -317,10 +317,10 @@ async def reset_and_busy(dut: HierarchyObject) -> None:
 	await Timer(12, unit="ns")
 	with pytest.raises(EndpointStateError, match="one operation"):
 		await sink.recv()
-	resetting = cocotb.start_soon(sink.reset())
+	resetting = cocotb.start_soon(sink.initialise())
 	await Timer(1, unit="ns")
 	with pytest.raises(EndpointStateError, match="already active"):
-		await sink.reset()
+		await sink.initialise()
 	await resetting
 	assert isinstance(await pending, TransferReset)
 	task = cocotb.start_soon(source.send(72))
@@ -334,8 +334,8 @@ async def cancellation_and_errors(dut: HierarchyObject) -> None:
 	await _setup(dut)
 	bus = _plain(dut)
 	source, sink = AxiStreamSource(bus, "beat_clock"), AxiStreamSink(bus, "beat_clock")
-	await source.reset()
-	await sink.reset()
+	await source.initialise()
+	await sink.initialise()
 	sending = cocotb.start_soon(source.send("XXXXXXXX"))
 	await Timer(12, unit="ns")
 	sending.cancel()
@@ -343,7 +343,7 @@ async def cancellation_and_errors(dut: HierarchyObject) -> None:
 		await sending
 	with pytest.raises(EndpointStateError):
 		await source.send(0)
-	await source.reset()
+	await source.initialise()
 	await ReadOnly()
 	assert int(dut.plain_data.value) == 0
 	assert str(dut.plain_valid.value) == "0"
@@ -354,14 +354,14 @@ async def cancellation_and_errors(dut: HierarchyObject) -> None:
 		await receiving
 	with pytest.raises(EndpointStateError):
 		await sink.recv()
-	await sink.reset()
+	await sink.initialise()
 	await ReadOnly()
 	assert str(dut.plain_ready.value) == "0"
 	with pytest.raises(ValueError):
 		await source.send(256)
 	with pytest.raises(EndpointStateError):
 		await source.send(0)
-	await source.reset()
+	await source.initialise()
 	task = cocotb.start_soon(source.send(9))
 	assert to_unsigned(_array((await sink.recv()).data)) == 9
 	await task
@@ -407,8 +407,8 @@ async def interruptions_after_acceptance(dut: HierarchyObject) -> None:
 	source, sink = AxiStreamSource(source_bus, "beat_clock"), AxiStreamSink(sink_bus, "beat_clock")
 	for target in ("source", "sink"):
 		for interruption in ("cancel", "reset"):
-			await source.reset()
-			await sink.reset()
+			await source.initialise()
+			await sink.initialise()
 			await _reset_registered_path(dut)
 			value = 0x1234
 			if target == "source":
@@ -434,9 +434,9 @@ async def interruptions_after_acceptance(dut: HierarchyObject) -> None:
 						await source.send(0, last=False)
 					else:
 						await sink.recv()
-				await endpoint.reset()
+				await endpoint.initialise()
 			else:
-				await endpoint.reset()
+				await endpoint.initialise()
 				assert isinstance(await pending, TransferReset)
 			await ReadOnly()
 			assert int(dut.accepted.value) == 1  # Recovery cannot undo acceptance.
@@ -454,8 +454,8 @@ async def interruptions_after_acceptance(dut: HierarchyObject) -> None:
 			else:
 				assert str(sink_bus.ready.value) == "0"
 			# Coordinate local recovery with DUT reset, then send a distinct value.
-			await source.reset()
-			await sink.reset()
+			await source.initialise()
+			await sink.initialise()
 			await _reset_registered_path(dut)
 			sending = cocotb.start_soon(source.send(0x5678, last=False))
 			result = await sink.recv()
@@ -473,8 +473,8 @@ async def cancelled_resets(dut: HierarchyObject) -> None:
 	await _setup(dut)
 	bus = _record(dut)
 	source, sink = AxiStreamSource(bus, "beat_clock"), AxiStreamSink(bus, "beat_clock")
-	await source.reset()
-	await sink.reset()
+	await source.initialise()
+	await sink.initialise()
 	for target, cancel_transfer in (("source", True), ("sink", True), ("source", False), ("sink", False)):
 		if target == "source":
 			pending = cocotb.start_soon(_capture(source.send({"i": "X" * 16, "q": "U" * 16}, last=True)))
@@ -488,7 +488,7 @@ async def cancelled_resets(dut: HierarchyObject) -> None:
 			with pytest.raises(CancelledError):
 				await pending
 		endpoint = source if target == "source" else sink
-		resetting = cocotb.start_soon(endpoint.reset())
+		resetting = cocotb.start_soon(endpoint.initialise())
 		await Timer(1, unit="ns")  # Cancel before the next falling edge can clear outputs.
 		resetting.cancel()
 		with pytest.raises(CancelledError):
@@ -507,7 +507,7 @@ async def cancelled_resets(dut: HierarchyObject) -> None:
 			assert str(dut.iq_word_in["q"].value) == "U" * 16
 		else:
 			assert str(bus.ready.value) == "1"
-		await endpoint.reset()
+		await endpoint.initialise()
 		await ReadOnly()
 		if target == "source":
 			assert str(bus.valid.value) == "0"
@@ -557,11 +557,11 @@ async def healthy_reset_failures(dut: HierarchyObject) -> None:
 	payload = _FaultPayload(dut.plain_data)
 	source = AxiStreamSource(bus, "beat_clock", payload=payload)
 	sink = AxiStreamSink(bus, "beat_clock")
-	await source.reset()
-	await sink.reset()
+	await source.initialise()
+	await sink.initialise()
 	for target in ("source", "sink"):
 		endpoint = source if target == "source" else sink
-		resetting = cocotb.start_soon(endpoint.reset())
+		resetting = cocotb.start_soon(endpoint.initialise())
 		await Timer(1, unit="ns")  # Healthy and idle; reset has begun but cannot finish.
 		resetting.cancel()
 		with pytest.raises(CancelledError):
@@ -571,14 +571,14 @@ async def healthy_reset_failures(dut: HierarchyObject) -> None:
 				await source.send(1)
 			else:
 				await sink.recv()
-		await endpoint.reset()
+		await endpoint.initialise()
 	payload.failure = "clear"
 	with pytest.raises(RuntimeError, match="injected clear"):
-		await source.reset()
+		await source.initialise()
 	with pytest.raises(EndpointStateError):
 		await source.send(2)
 	payload.failure = None
-	await source.reset()
+	await source.initialise()
 	sending = cocotb.start_soon(source.send(3))
 	assert to_unsigned(_array((await sink.recv()).data)) == 3
 	await sending
@@ -593,8 +593,8 @@ async def adapter_failures(dut: HierarchyObject) -> None:
 	sink_payload = _FaultPayload(dut.plain_data)
 	source = AxiStreamSource(bus, "beat_clock", payload=source_payload)
 	sink = AxiStreamSink(bus, "beat_clock", payload=sink_payload)
-	await source.reset()
-	await sink.reset()
+	await source.initialise()
+	await sink.initialise()
 	source_payload.failure = "drive"
 	with pytest.raises(RuntimeError, match="injected drive"):
 		await source.send("XU000001")
@@ -602,14 +602,14 @@ async def adapter_failures(dut: HierarchyObject) -> None:
 		await source.send(0)
 	source_payload.failure = "clear"
 	with pytest.raises(RuntimeError, match="injected clear"):
-		await source.reset()
+		await source.initialise()
 	with pytest.raises(EndpointStateError):
 		await source.send(0)
 	await ReadOnly()
 	assert str(dut.plain_data.value) == "XU000001"
 	assert str(bus.valid.value) == "0"
 	source_payload.failure = None
-	await source.reset()
+	await source.initialise()
 	await ReadOnly()
 	assert int(dut.plain_data.value) == 0
 
@@ -622,7 +622,7 @@ async def adapter_failures(dut: HierarchyObject) -> None:
 		await sink.recv()
 	# The sink owns only ready: reset must not invoke the payload clear hook.
 	sink_payload.failure = "clear"
-	await sink.reset()
+	await sink.initialise()
 	await ReadOnly()
 	assert str(bus.ready.value) == "0"
 	assert int(dut.plain_data.value) == 21

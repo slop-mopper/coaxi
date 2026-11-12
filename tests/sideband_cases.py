@@ -118,8 +118,8 @@ async def binding_and_simple_defaults(dut: HierarchyObject) -> None:
 	assert direct.keep is dut.sb_tkeep
 	source = AxiStreamSource(bare, dut.beat_clock)
 	sink = AxiStreamSink(bare, dut.beat_clock)
-	await source.reset()
-	await sink.reset()
+	await source.initialise()
+	await sink.initialise()
 	sending = cocotb.start_soon(source.send(42))
 	result = await sink.recv()
 	await sending
@@ -130,8 +130,8 @@ async def binding_and_simple_defaults(dut: HierarchyObject) -> None:
 	bus = _bus(dut)
 	source = AxiStreamSource(bus, dut.beat_clock)
 	sink = AxiStreamSink(bus, dut.beat_clock)
-	await source.reset()
-	await sink.reset()
+	await source.initialise()
+	await sink.initialise()
 	sending = cocotb.start_soon(source.send_frame([11, 22]))
 	frame = await sink.recv_frame()
 	await sending
@@ -148,8 +148,8 @@ async def registered_sideband_full_rate(dut: HierarchyObject) -> None:
 	input_bus, output_bus = _bus(dut, "s"), _bus(dut, "m")
 	source = AxiStreamSource(input_bus, dut.beat_clock)
 	sink = AxiStreamSink(output_bus, dut.beat_clock)
-	await source.reset()
-	await sink.reset()
+	await source.initialise()
+	await sink.initialise()
 	dut.allow_input.value = 1
 	expected: list[tuple[str, ...]] = []
 	for index in range(128):
@@ -201,9 +201,9 @@ async def registered_sideband_full_rate(dut: HierarchyObject) -> None:
 	# Sink reset owns only ready, not its incoming data or any sidebands.
 	before = _snapshot(output_bus)
 	assert before[2] == "XU"
-	await sink.reset()
+	await sink.initialise()
 	assert _snapshot(output_bus) == before
-	await source.reset()
+	await source.initialise()
 	await ReadOnly()
 	assert all(set(value) <= {"0"} for value in _snapshot(input_bus))
 	assert _snapshot(output_bus) == before
@@ -223,8 +223,8 @@ async def scalar_qualifiers_and_omissions(dut: HierarchyObject) -> None:
 			strb=dut.byte_strb if strb else False,
 		)
 		source, sink = AxiStreamSource(bus, dut.beat_clock), AxiStreamSink(bus, dut.beat_clock)
-		await source.reset()
-		await sink.reset()
+		await source.initialise()
+		await sink.initialise()
 		metadata = AxiStreamSidebands(keep=0 if keep else None)
 		sending = cocotb.start_soon(source.send(0xAB, sidebands=metadata))
 		result = await sink.recv()
@@ -246,7 +246,7 @@ async def backpressure_and_preflight(dut: HierarchyObject) -> None:
 	await _setup(dut)
 	bus = _bus(dut)
 	source = AxiStreamSource(bus, dut.beat_clock)
-	await source.reset()
+	await source.initialise()
 	before = _snapshot(bus)
 	bad = [
 		AxiStreamSidebands(keep=1, strb=3),
@@ -286,7 +286,7 @@ async def backpressure_and_preflight(dut: HierarchyObject) -> None:
 	assert _snapshot(bus)[2:] == ("01", "01", "00000", "00000000000", "000000000")
 	await sending
 	bare = AxiStreamSource(AxiStreamBus.bind(dut, prefix="sb"), dut.beat_clock)
-	await bare.reset()
+	await bare.initialise()
 	with pytest.raises(ValueError, match="requires a bound"):
 		await bare.send(1, sidebands=AxiStreamSidebands(user=0))
 	# No reset is needed after this preflight failure.
@@ -299,8 +299,8 @@ async def interleaved_packets(dut: HierarchyObject) -> None:
 	await _setup(dut)
 	bus = _bus(dut)
 	source, sink = AxiStreamSource(bus, dut.beat_clock), AxiStreamSink(bus, dut.beat_clock)
-	await source.reset()
-	await sink.reset()
+	await source.initialise()
+	await sink.initialise()
 	# Same id/different dest and same dest/different id must not be merged.
 	beats = [
 		(11, 1, 0, False),
@@ -355,8 +355,8 @@ async def frame_metadata_and_identity_errors(dut: HierarchyObject) -> None:
 	await _setup(dut)
 	bus = _bus(dut)
 	source, sink = AxiStreamSource(bus, dut.beat_clock), AxiStreamSink(bus, dut.beat_clock)
-	await source.reset()
-	await sink.reset()
+	await source.initialise()
+	await sink.initialise()
 	metadata = [
 		AxiStreamSidebands(keep=3, strb=2, user="XU01Z", id=1024, dest=256),
 		AxiStreamSidebands(keep=1, user=23, id=1024, dest=256),
@@ -375,10 +375,10 @@ async def frame_metadata_and_identity_errors(dut: HierarchyObject) -> None:
 		await source.send_frame([1, 2], sidebands=[AxiStreamSidebands(id=1), AxiStreamSidebands(id=2)])
 	with pytest.raises(EndpointStateError):
 		await source.send(3, last=True)
-	await source.reset()
+	await source.initialise()
 	with pytest.raises(ValueError, match="literal"):
 		await source.send_frame([1], sidebands=[AxiStreamSidebands(id="X0000000000")])
-	await source.reset()
+	await source.initialise()
 
 
 @cocotb.test(timeout_time=6000, timeout_unit="ns")
@@ -387,8 +387,8 @@ async def receive_faults_and_retained_limits(dut: HierarchyObject) -> None:
 	await _setup(dut)
 	bus = _bus(dut)
 	source, sink = AxiStreamSource(bus, dut.beat_clock), AxiStreamSink(bus, dut.beat_clock)
-	await source.reset()
-	await sink.reset()
+	await source.initialise()
+	await sink.initialise()
 	meta = AxiStreamSidebands(id="X0000000000", dest="H00000000")
 	sending = cocotb.start_soon(source.send(1, last=True, sidebands=meta))
 	raw = await sink.recv()
@@ -398,7 +398,7 @@ async def receive_faults_and_retained_limits(dut: HierarchyObject) -> None:
 	with pytest.raises(ProtocolValueError, match="literal"):
 		await sink.recv_frame()
 	await sending
-	await sink.reset()
+	await sink.initialise()
 
 	# B completes while A has a retained prefix. Lowering the next limit must
 	# reject that prefix without accepting another beat.
@@ -414,7 +414,7 @@ async def receive_faults_and_retained_limits(dut: HierarchyObject) -> None:
 	with pytest.raises(ValueError, match="retained"):
 		await sink.recv_frame(max_transfers=2)
 	assert get_sim_time(unit="step") == at_limit
-	await sink.reset()
+	await sink.initialise()
 	sending = cocotb.start_soon(source.send(4, last=True, sidebands=AxiStreamSidebands(id=1)))
 	packet = await sink.recv_frame()
 	await sending
@@ -430,8 +430,8 @@ async def receive_faults_and_retained_limits(dut: HierarchyObject) -> None:
 		await sink.recv()
 	with pytest.raises(EndpointStateError):
 		await sink.recv()
-	await source.reset()
-	await sink.reset()
+	await source.initialise()
+	await sink.initialise()
 
 
 @cocotb.test(timeout_time=6000, timeout_unit="ns")
@@ -440,8 +440,8 @@ async def mixed_receive_api_boundaries(dut: HierarchyObject) -> None:
 	await _setup(dut)
 	bus = _bus(dut)
 	source, sink = AxiStreamSource(bus, dut.beat_clock), AxiStreamSink(bus, dut.beat_clock)
-	await source.reset()
-	await sink.reset()
+	await source.initialise()
+	await sink.initialise()
 	for raw_last, unresolved in ((True, False), (False, False), (True, True)):
 
 		async def send_prefixes() -> None:
@@ -483,8 +483,8 @@ async def record_sidebands_and_exact_names(dut: HierarchyObject) -> None:
 	)
 	assert bus.user is dut["\\lane.payload[0]\\"]
 	source, sink = AxiStreamSource(bus, dut.beat_clock), AxiStreamSink(bus, dut.beat_clock)
-	await source.reset()
-	await sink.reset()
+	await source.initialise()
+	await sink.initialise()
 	metadata = [AxiStreamSidebands(user="XU010101", id=1024), AxiStreamSidebands(user=127, id=1024)]
 	sending = cocotb.start_soon(source.send_frame([{"i": 1, "q": 2}, {"i": 3, "q": 4}], sidebands=metadata))
 	packet = await sink.recv_frame()
@@ -493,7 +493,7 @@ async def record_sidebands_and_exact_names(dut: HierarchyObject) -> None:
 	assert [str(value.user) for value in packet] == ["XU010101", "01111111"]
 	assert all(str(value.id) == "10000000000" and str(value.dest) == "0" for value in packet)
 	assert all(value.keep is value.strb is None for value in packet)
-	await source.reset()
+	await source.initialise()
 	assert [str(value.user) for value in packet] == ["XU010101", "01111111"]
 
 
@@ -503,8 +503,8 @@ async def partial_packet_cancellation_and_wire_order(dut: HierarchyObject) -> No
 	await _setup(dut)
 	bus = _bus(dut)
 	source, sink = AxiStreamSource(bus, dut.beat_clock), AxiStreamSink(bus, dut.beat_clock)
-	await source.reset()
-	await sink.reset()
+	await source.initialise()
+	await sink.initialise()
 	receiving = cocotb.start_soon(sink.recv_frame())
 	await source.send(11, last=False, sidebands=AxiStreamSidebands(id=1))
 	await source.send(21, last=False, sidebands=AxiStreamSidebands(id=2))
@@ -512,7 +512,7 @@ async def partial_packet_cancellation_and_wire_order(dut: HierarchyObject) -> No
 	receiving.cancel()
 	with pytest.raises(CancelledError):
 		await receiving
-	await sink.reset()
+	await sink.initialise()
 	for value, identifier in ((22, 2), (12, 1), (31, 3)):
 		sending = cocotb.start_soon(source.send(value, last=True, sidebands=AxiStreamSidebands(id=identifier)))
 		packet = await sink.recv_frame()
