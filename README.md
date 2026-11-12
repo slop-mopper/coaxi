@@ -363,12 +363,35 @@ initialisation. Use individual `send()` calls to deliberately interleave differe
 The existing `send_frame`/`recv_frame` names denote a packet ending in last; the
 AXI4-Stream specification also uses “frame” for application groupings of packets.
 
+### Coverage-guided review
+
+Run `uv run python tests/run_coverage.py` to measure coaxi's statement and branch
+coverage in pytest **and in Python embedded in NVC**, in both write modes.
+It writes a combined text report, `coverage.json` and `htmlcov/index.html`.
+Coverage.py is development-only; the consumer-installation check remains runtime-only.
+Use the uncovered lines/branches to investigate missing assertions and failure
+paths. There is no percentage target, and high coverage does not prove correctness.
+See [the static and coverage review](AXI_STREAM_REVIEW.md) for findings, regression
+tests and remaining gaps.
+
 ### Payloads
 
 Payload access is separate from handshake logic. The default `HandlePayload`
 adapter accepts scalar logic, vectors and named containers such as VHDL records.
 Reads retain cocotb `Logic`/`LogicArray` values and use field mappings for records.
-For example, an IQ record with two signed 16-bit fields can be sent directly:
+For example, this VHDL record needs no packing or custom adapter:
+
+```vhdl
+type IQ_t is record
+	i : signed(15 downto 0);
+	q : signed(15 downto 0);
+end record;
+signal iq_word_in : IQ_t;
+```
+
+Bind `data="iq_word_in"` (or its handle), with independent valid/ready/last
+names as shown in [the runnable example](examples/stream_loopback.py).
+Then send a field mapping directly:
 
 ```python
 from cocotb.types import LogicArray
@@ -382,7 +405,8 @@ await source.send(
 Integer inputs are unsigned and must fit the leaf width. Field mappings must
 match all record fields exactly. Negative numbers need an explicitly signed
 `LogicArray`, as above. Default payload validation checks the entire value before
-writing any leaf. Unsupported handle types require a custom adapter.
+writing any leaf. Conversion errors identify the failing HDL leaf; the original
+exception class and cause are preserved. Unsupported handle types require a custom adapter.
 
 `to_unsigned()` and `to_signed()` explicitly convert vector snapshots. They
 reject unresolved X/U/Z/etc. even if cocotb is configured to resolve them;
@@ -404,6 +428,25 @@ must define every owned leaf. A custom source adapter can partially write before
 raising; recovery does not roll those writes back. The sink never calls the
 payload's `clear`, since it does not own incoming data. Do not mutate a value
 passed to `send` or `send_frame` until that call finishes.
+
+For reception, `transfer.data` is a mapping with the exact HDL field names:
+
+```python
+from collections.abc import Mapping
+from coaxi import to_signed
+
+transfer = await sink.recv()
+assert isinstance(transfer.data, Mapping)
+i_bits, q_bits = transfer.data["i"], transfer.data["q"]
+assert isinstance(i_bits, LogicArray) and isinstance(q_bits, LogicArray)
+i, q = to_signed(i_bits), to_signed(q_bits)
+```
+
+`to_signed` raises for unresolved fields rather than concealing X/U values.
+The runnable example sends and checks a complete IQ frame; run it with
+`uv run pytest -q tests/test_simulation.py -k example`. Its same-bus loopback
+uses concurrent send/receive tasks. With a DUT between the endpoints, bind
+the source to its input and the sink to its output; do not drive DUT-owned signals.
 
 ## Initialisation, reset pins, errors and cancellation
 
@@ -432,6 +475,10 @@ await source.initialise()
 ```
 
 Both endpoints accept optional keyword-only `reset` and `reset_active_high`.
+A monitored reset must be mutable: constant/generic handles are rejected
+at construction because cocotb cannot register their change callbacks.
+Unexpected watcher failures are latched and reported through endpoint operations,
+rather than escaping as unobserved background exceptions.
 `reset` is an exact arbitrary signal name or an already-bound one-bit logic handle;
 one-bit vectors with arbitrary indices are supported. It is absent by default,
 with no discovery. `reset_active_high=True` selects active-high; the default

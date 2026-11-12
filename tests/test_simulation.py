@@ -13,7 +13,7 @@ from cocotb_tools.runner import get_runner
 
 @pytest.mark.parametrize("trust_inertial", ["0", "1"])
 @pytest.mark.parametrize(
-	"suite", ["regression", "full_rate", "frames", "handles", "sidebands", "omissions", "reset_pin", "example"]
+	"suite", ["regression", "full_rate", "frames", "handles", "sidebands", "omissions", "reset_pin", "audit", "example"]
 )
 def test_stream_simulation(tmp_path: Path, trust_inertial: str, suite: str, monkeypatch: pytest.MonkeyPatch) -> None:
 	"""Build in tmp_path, run suite with the selected write mode and require passing results."""
@@ -30,6 +30,7 @@ def test_stream_simulation(tmp_path: Path, trust_inertial: str, suite: str, monk
 		"sidebands": "sideband_cases",
 		"omissions": "omission_cases",
 		"reset_pin": "reset_pin_cases",
+		"audit": "audit_cases",
 		"example": "stream_loopback",
 	}[suite]
 	test_dir = tests.parent / "examples" if suite == "example" else tests

@@ -100,6 +100,8 @@ class _Endpoint[T]:
 		if type(reset_active_high) is not bool:
 			raise TypeError("reset_active_high must be a bool")
 		self._reset = None if reset is None else _control(_resolve(bus._entity, reset, "reset"), "reset")
+		if self._reset is not None and self._reset.is_const:
+			raise SignalBindingError(f"reset: {self._reset._path} must be mutable to monitor changes")
 		if self._reset is not None and self._reset._path in {handle._path for handle in [self._clock, *bus._handles()]}:
 			raise SignalBindingError("reset must be separate from the clock and stream signals")
 		self._reset_active_high = reset_active_high
@@ -234,10 +236,19 @@ class _Endpoint[T]:
 
 	async def _watch_reset(self, generation: object) -> None:
 		assert self._reset is not None
-		while self._monitor_generation is generation:
-			await ValueChange(self._reset)
+		try:
+			while self._monitor_generation is generation:
+				await ValueChange(self._reset)
+				if self._monitor_generation is generation:
+					self._observe_reset()
+		except Exception as exc:
+			# Callback registration/read failures belong to the endpoint, just
+			# like collector faults. Never let an unobserved task abort the test.
 			if self._monitor_generation is generation:
-				self._observe_reset()
+				if self._fault is None:
+					self._fault = exc
+				self._needs_initialise = True
+				self._invalidate()
 
 	def _owns_pin_cycle(self, generation: object, cycle: object) -> bool:
 		return self._monitor_generation is generation and self._pin_cycle is cycle
@@ -486,7 +497,10 @@ class AxiStreamSource[T = PayloadValue | None](_Endpoint[T]):
 				metadata = self._sidebands.prepare(None if sidebands is None else sidebands[index])
 				key = _identity(metadata.get("id"), metadata.get("dest"))
 				if identity is not None and key != identity:
-					raise ValueError("send_frame requires a constant effective (id, dest)")
+					raise ValueError(
+						f"send_frame requires a constant effective (id, dest); "
+						f"entry {index} (zero-based) changes identity from {identity} to {key}"
+					)
 				identity = key
 				await self._send_one(token, data[index], index == count - 1, metadata)
 			_log.debug("sent frame on %s, transfers=%s", self._name, count)

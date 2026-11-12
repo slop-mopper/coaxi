@@ -23,6 +23,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+	"coverage>=7.6",
 	"pytest",
 	"pyrefly",
 	"ruff",
@@ -30,6 +31,14 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+parallel = true
+source_pkgs = ["coaxi"]
+
+[tool.coverage.report]
+show_missing = true
 
 [tool.ruff]
 line-length = 120

@@ -223,7 +223,32 @@ children and matches their exact reported names. This accommodates VHPI lookup
 limitations with extended identifiers containing punctuation, without rewriting
 a caller's name.
 
+## Review and coverage
+
+Mandatory valid is validated in both binding paths, including direct construction.
+Monitored reset handles must be mutable; cocotb cannot watch constants/generics.
+Unexpected watcher exceptions use the existing generation-guarded first-fault
+latch, invalidate pending work and notify initialisation/receive waiters.
+Payload and sideband conversion errors retain their class/cause and add the
+offending HDL path. Frame identity errors identify the zero-based entry and both
+identities. These checks add no transfer-phase waits or protocol features.
+
+Coverage.py is a development-only dependency. `uv run python tests/run_coverage.py`
+collects branch coverage for coaxi in pytest and in NVC via cocotb's native
+COCOTB_USER_COVERAGE hook. Parallel data files prevent processes overwriting one
+another; the script combines them into a text report, coverage.json and htmlcov/.
+The separate consumer-installation test disables that hook, keeping its environment
+runtime-only. Coverage is a review aid, with no percentage threshold or new
+exclusions for hard-to-reach paths. See AXI_STREAM_REVIEW.md for findings and limits.
+
 ## Tests and development
+
+- `tests/audit_cases.py` checks immutable reset binding, unexpected watcher
+  failures, precise record/sideband conversion diagnostics, atomic validation,
+  frame identity failures after an accepted prefix, exact capacity conservation
+  across mixed receive APIs, stale pin-cycle ownership and cancelled deferred
+  initialisation safety. It runs in both NVC write modes.
+- `tests/test_validation.py` checks that invalid direct valid bindings fail early.
 
 - `tests/test_values.py` covers explicit numeric conversion.
 - `tests/test_distribution.py` builds the sdist and a wheel from that sdist using

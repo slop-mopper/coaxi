@@ -80,7 +80,7 @@ class HandlePayload:
 
 	def _prepare(self, value: PayloadValue) -> list[tuple[LogicObject | LogicArrayObject, Logic | LogicArray]]:
 		if value is None:
-			raise TypeError("None requires an absent data signal")
+			raise TypeError(f"{self._handle._path}: None requires an absent data signal")
 		if self._children:
 			if not isinstance(value, Mapping) or value.keys() != self._children.keys():
 				raise ValueError(f"{self._handle._path}: expected exactly these fields: {list(self._children)}")
@@ -89,14 +89,17 @@ class HandlePayload:
 			raise TypeError(f"{self._handle._path}: expected a logic value, not a field mapping")
 		if isinstance(value, int) and value < 0:
 			raise ValueError(f"{self._handle._path}: integer payloads must be unsigned; use LogicArray.from_signed")
-		if isinstance(self._handle, LogicObject):
-			if isinstance(value, LogicArray):
-				value = str(value)
-			return [(self._handle, Logic(value))]
-		if isinstance(self._handle, LogicArrayObject):
-			if isinstance(value, (Logic, LogicArray)):
-				value = str(value)
-			return [(self._handle, LogicArray(value, self._handle.range))]
+		try:
+			if isinstance(self._handle, LogicObject):
+				if isinstance(value, LogicArray):
+					value = str(value)
+				return [(self._handle, Logic(value))]
+			if isinstance(self._handle, LogicArrayObject):
+				if isinstance(value, (Logic, LogicArray)):
+					value = str(value)
+				return [(self._handle, LogicArray(value, self._handle.range))]
+		except (ValueError, TypeError, OverflowError) as exc:
+			raise type(exc)(f"{self._handle._path}: {exc}") from exc
 		raise TypeError("unsupported payload handle")
 
 	def drive(self, value: PayloadValue) -> None:

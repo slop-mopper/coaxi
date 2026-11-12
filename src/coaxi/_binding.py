@@ -40,13 +40,15 @@ def _resolve(entity: HierarchyObject | None, signal: Signal, role: str) -> SimHa
 def _control(handle: SimHandleBase, role: str) -> _Control:
 	if isinstance(handle, LogicObject) or (isinstance(handle, LogicArrayObject) and len(handle) == 1):
 		return handle
-	raise SignalBindingError(f"{role}: {handle._path} must be a scalar or one-bit logic signal")
+	raise SignalBindingError(
+		f"{role}: {getattr(handle, '_path', repr(handle))} must be a scalar or one-bit logic signal"
+	)
 
 
 def _logic(handle: SimHandleBase, role: str) -> _Control:
 	if isinstance(handle, LogicObject) or (isinstance(handle, LogicArrayObject) and len(handle) > 0):
 		return handle
-	raise SignalBindingError(f"{role}: {handle._path} must be a non-empty logic signal")
+	raise SignalBindingError(f"{role}: {getattr(handle, '_path', repr(handle))} must be a non-empty logic signal")
 
 
 @dataclass(frozen=True)
@@ -85,7 +87,8 @@ class AxiStreamBus:
 	"""Routing destination, or None when absent."""
 
 	def __post_init__(self) -> None:
-		for role in ("valid", "ready", "last"):
+		_control(self.valid, "valid")
+		for role in ("ready", "last"):
 			handle = getattr(self, role)
 			if handle is not None:
 				_control(handle, role)

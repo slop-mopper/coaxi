@@ -94,10 +94,13 @@ class _SidebandAccess:
 				else:
 					value = 0
 			if isinstance(value, int) and value < 0:
-				raise ValueError(f"{role}: integer sidebands must be unsigned")
+				raise ValueError(f"{role} ({handle._path}): integer sidebands must be unsigned")
 			if isinstance(value, (Logic, LogicArray)):
 				value = str(value)
-			values[role] = Logic(value) if isinstance(handle, LogicObject) else LogicArray(value, handle.range)
+			try:
+				values[role] = Logic(value) if isinstance(handle, LogicObject) else LogicArray(value, handle.range)
+			except (ValueError, TypeError, OverflowError) as exc:
+				raise type(exc)(f"{role} ({handle._path}): {exc}") from exc
 		self._validate(values)
 		return values
 

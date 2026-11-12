@@ -9,3 +9,6 @@ __pycache__/
 .pytest_cache/
 sim_build/
 dist/
+.coverage*
+coverage.json
+htmlcov/

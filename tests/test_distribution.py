@@ -64,6 +64,9 @@ def test_distribution(tmp_path: Path) -> None:
 			"tests/sideband_cases.py",
 			"tests/omission_cases.py",
 			"tests/reset_pin_cases.py",
+			"tests/audit_cases.py",
+			"tests/test_validation.py",
+			"tests/run_coverage.py",
 			"tests/hdl/stream_dut.vhd",
 			"examples/stream_loopback.py",
 			*[f"src/coaxi/{name}" for name in package_files],
@@ -122,7 +125,7 @@ consumer = Path(sys.argv[1]).resolve()
 assert Path(sys.prefix).resolve() == consumer
 assert Path(coaxi.__file__).is_relative_to(consumer), coaxi.__file__
 assert Path(distribution("coaxi").locate_file("")).resolve().is_relative_to(consumer)
-for development_package in ("pyrefly", "ruff"):
+for development_package in ("pyrefly", "ruff", "coverage"):
 	try:
 		distribution(development_package)
 	except PackageNotFoundError:
@@ -181,6 +184,9 @@ from pathlib import Path
 from cocotb_tools.runner import get_runner
 
 fixture = Path(sys.argv[1])
+# This consumer intentionally has runtime dependencies only. Coverage of the
+# checkout is collected separately, not injected into this installation.
+os.environ["COCOTB_USER_COVERAGE"] = "0"
 runner = get_runner("nvc")
 runner.build(
 	sources=[fixture / "stream_dut.vhd"],

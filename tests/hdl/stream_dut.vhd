@@ -7,6 +7,7 @@ use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
 entity stream_dut is
+	generic (fixed_reset : std_logic := '0');
 end entity;
 
 architecture test of stream_dut is
