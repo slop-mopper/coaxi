@@ -1,7 +1,3 @@
-# README.md
-# SPDX-License-Identifier: CC0-1.0
-# This file was created by an AI model: openai/gpt-6.1-sol
-
 # coaxi
 
 AXI interface helpers for cocotb testbenches, written for Python 3.13.
