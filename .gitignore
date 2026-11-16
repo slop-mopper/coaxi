@@ -12,3 +12,4 @@ dist/
 .coverage*
 coverage.json
 htmlcov/
+reliability-results.json

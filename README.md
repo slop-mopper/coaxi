@@ -583,6 +583,41 @@ locked runtime graph, rather than every permitted dependency version.
 Build isolation and runtime installation may need downloads when uncached.
 It performs no publication or upload.
 
+### Reliability stress and assertion checks
+
+The ordinary regression includes independent wire scoreboards with seeds
+`73, 2028, 65537` and 24 lifecycle rounds per seed, in both write modes.
+The source is checked by a directly driven receiver; the sink is checked by
+a directly driven producer, without using the opposite coaxi endpoint as an oracle.
+An index-based reference model accounts for interleaved packets, mixed raw/frame
+receives, retained prefixes and intentional discards. Tests also cover stalled
+signal stability, caller idle periods and repeated reset/cancel/error/close recovery.
+
+For a larger bounded run and targeted mutation checks:
+
+```console
+uv run python tests/run_reliability.py
+uv run python tests/run_reliability.py --seeds 73 2028 --rounds 240
+uv run python tests/run_reliability.py --mutations
+```
+
+The default extended run uses seeds `0..7` and 120 lifecycle rounds: 1,920
+no-ready sink lifecycle rounds across both write modes. Each seed also checks
+source traffic and both ready-backed/no-ready sink traffic. Failures include
+the seed and recent traffic history. `--seeds` accepts 1..64 integers;
+`--rounds` accepts 6..600. Tests and host subprocesses have bounded timeouts.
+Use ordinary Python without `-O`/`PYTHONOPTIMIZE`; disabling safety assertions
+is rejected by the harness.
+
+Mutation checks run passing controls and four deliberately faulty variants in
+temporary copies. They never edit the working library. Copied-module paths and
+hashes are checked inside NVC. Detection requires the designated test's specific
+assertion; a build/import failure, timeout, skip or unrelated exception fails the
+harness instead. The four faults drop `user`, duplicate acceptance, retire the
+wrong capacity and leave a collector running after close. A successful run
+writes `reliability-results.json`. This samples assertion strength; it is not
+an exhaustive mutation score or a guarantee of correctness.
+
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the components, timing model and
 current limitations, and [AGENTS.md](AGENTS.md) for the development rules.
 

@@ -77,6 +77,51 @@ The stale-cycle replay deliberately bypasses task cancellation to exercise
 ownership guards; it is fault injection, not a claim that normal cancellation
 routinely leaves tasks running.
 
+## Follow-up: independent stress and mutation checks
+
+The follow-up on `d80c332` keeps the public API and production implementation
+unchanged. `tests/reliability_cases.py` uses directly driven peers and an
+index-based reference ledger instead of coaxi's opposite endpoint or packet
+dictionary. It compares all payload/sideband fields, detects extra or missing
+acceptance, checks stable stalled outputs and reconciles mixed raw/frame delivery
+and discarded prefixes. Randomised traffic includes meta-values, zero payloads,
+null qualifiers, interleaved identities and caller idle periods.
+
+Repeated no-ready sink lifecycles check reset, cancellation of unfinished packets,
+adapter-read failures, overflow, stopped-clock close and reinitialisation.
+Retained counts are checked before recovery can conceal errors. Fault identity
+must survive pin cycling. Saved background tasks must finish, state must be empty
+after disposal and closed capture must stop reading the adapter. These checks
+measure endpoint task/state lifetime, not general interpreter memory growth.
+
+The ordinary regression uses three recorded seeds with both reset polarities.
+The extended run uses seeds 0..7 and 120 lifecycle epochs each in both write modes
+(1,920 sink lifecycle epochs), plus independent source and sink traffic per seed.
+The suite has simulation-time bounds and a host-process bound.
+
+Four temporary-copy mutations were detected in both NVC write modes:
+
+| Deliberate fault | Required detecting oracle |
+| --- | --- |
+| Drop the user sideband | Source wire comparison |
+| Delay cleanup so a beat can be accepted twice | Source wire comparison |
+| Retire one retained beat instead of the completed packet | Sink retention conservation |
+| Leave an invalidated collector running | Saved-task completion after close |
+
+Each mode first requires a passing unmodified control and the complete four-case
+mutation inventory. Mutants must fail the designated test through its specific
+AssertionError, not a timeout or infrastructure fault. Package/test origins and
+module hashes are verified in the simulator; working source hashes are unchanged.
+The verdict checker has negative tests for unrelated failures, skipped/missing
+tests, surviving mutants and optimised Python. The worker overrides inherited
+failure limits and removes embedded optimisation settings. See README.md for
+repeatable stress and mutation commands and `reliability-results.json` output.
+
+No new production defect was established in this follow-up. These four mutants
+are representative assertion checks, not exhaustive fault injection. Scheduler
+boundary regressions from the earlier suites remain necessary alongside longer
+seeded runs; the stress suite does not replace them.
+
 ## Remaining gaps and limits
 
 The report intentionally leaves missing paths visible: unsupported/empty payload

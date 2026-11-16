@@ -241,6 +241,42 @@ The separate consumer-installation test disables that hook, keeping its environm
 runtime-only. Coverage is a review aid, with no percentage threshold or new
 exclusions for hard-to-reach paths. See AXI_STREAM_REVIEW.md for findings and limits.
 
+## Independent reliability checks
+
+`tests/reliability_cases.py` adds directly driven source/receiver peers and an
+index-based traffic ledger. It does not use coaxi's opposite endpoint or packet
+dictionary as its oracle. It compares all transfer fields and acceptance order,
+checks stalled output stability, and accounts for raw/frame deliveries and
+discarded prefixes across interleaved identities. With no ready, retained counts
+are checked against accepted minus delivered/discarded traffic before cleanup.
+
+Repeated no-ready sink epochs exercise healthy pin resets, cancelled incomplete
+packets, adapter-read failures, overflow, close and reinitialisation. Checks cover
+first-fault identity across pin cycling, retention disposal before another
+initialisation, saved monitor/release/collector task completion, stopped-clock
+close, and absence of adapter reads while closed. Each epoch accounts for accepted
+traffic as delivered or intentionally discarded. Task and retained-state checks
+are resource-lifetime tests, not a general process-memory leak measurement.
+
+The ordinary simulator runner includes seeds 73, 2028 and 65537, 24 epochs each,
+in both write modes. `tests/run_reliability.py` provides the bounded extended run
+(eight seeds, 120 epochs by default) and optional targeted mutation checks.
+Mutations use fresh source copies and `tests/reliability_worker.py`; production
+source hashes must stay unchanged. The isolated worker and embedded simulator
+verify copied-module origins and hashes. Controls must pass the complete case
+inventory before mutant results are considered. Only the intended named test's
+specific AssertionError counts as detection. Timeouts, import/build failures,
+skips, inventory differences and unrelated exceptions fail closed. Optimised
+Python is rejected, and embedded optimisation/failure-limit settings cannot
+silently suppress oracle assertions or terminate the inventory early.
+`tests/test_reliability_harness.py` checks false-verdict rejection, including
+optimised-interpreter subprocesses. These tests form a package for explicit
+host-side helper imports; none are included in the wheel.
+
+`--mutations` writes an ignored `reliability-results.json` only after all controls
+and four representative faults succeed as expected in both write modes.
+There is no public API or protocol implementation change in this test layer.
+
 ## Tests and development
 
 - `tests/audit_cases.py` checks immutable reset binding, unexpected watcher
