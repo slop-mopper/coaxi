@@ -103,6 +103,17 @@ def check_distribution(dist: Path, tmp_path: Path) -> None:
 			*[f"src/coaxi/{name}" for name in package_files],
 		]:
 			assert f"{prefix}/{path}" in source_files
+		# Ship all guide/reference sources, but not generated HTML or doctrees.
+		doc_paths = [root / "docs" / "conf.py", *sorted((root / "docs").rglob("*.md"))]
+		for doc_path in doc_paths:
+			relative = doc_path.relative_to(root)
+			if "_build" in relative.parts:
+				continue
+			member = source.extractfile(f"{prefix}/{relative.as_posix()}")
+			assert member is not None, relative
+			with member:
+				assert member.read() == doc_path.read_bytes(), relative
+		assert not any("/docs/_build/" in name for name in source_files)
 		member = source.extractfile(f"{prefix}/LICENSE.txt")
 		assert member is not None
 		with member:

@@ -147,9 +147,10 @@ messages at higher log levels.
 - Documentation uses Sphinx, MyST Markdown, and Furo under `docs/`, with tools
   in the separate `docs` dependency group. Build with
   `uv run --locked --group docs sphinx-build -M html docs docs/_build -n -W --keep-going`.
-- Keep the documentation site as a skeleton until the user asks for content.
-  Recording writing requirements does not authorise writing or migrating guides
-  or API pages.
+- Maintain the user guides and API reference in `docs/`. Check handwritten
+  signatures against the implementation, and run documentation examples with
+  `uv run --locked --group docs sphinx-build -M doctest docs docs/_build -n -W --keep-going`.
+  Keep the runnable tutorial linked to its simulator-tested source.
 
 ## Language and style
 

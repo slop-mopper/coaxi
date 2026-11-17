@@ -374,15 +374,30 @@ no additional lint rules are selected.
 
 ## Documentation infrastructure
 
-`docs/conf.py` configures Sphinx with MyST Markdown, autodoc and the Furo theme.
-The `docs` dependency group is separate from runtime and development dependencies.
-The site currently contains only a title and empty navigation; no user guide or
-API reference has been written or migrated. Autodoc uses the installed package
-when reference pages are added; no import mocks or source-path overrides are used.
-Generated HTML is written to the ignored `docs/_build/html` directory.
+`docs/conf.py` configures Sphinx with MyST Markdown, Python-domain reference
+directives, doctest, and the Furo theme. The `docs` dependency group is separate
+from runtime and development dependencies. Guides cover installation, signal
+binding, payload conversion, transfer timing, framing, sidebands, lifecycle,
+and development. Each public class has its own reference page with typed
+signatures and structured parameter and return fields using MyST's fieldlist
+extension. Type aliases and numeric helpers share a page.
+The reference is curated independently of source docstrings;
+regressions compare its parameter names, kinds, defaults, and annotations against
+the installed public API, and check export/method coverage. Distribution checks
+verify that all documentation sources are included in the sdist and generated
+HTML and doctrees are excluded.
+
+The tutorial includes `examples/stream_loopback.py` directly; the normal simulator
+suite runs that source in both write modes. Numeric examples run through Sphinx
+doctest. The build resolves internal references strictly; a finite list of
+external cocotb types and the generic T are displayed without inventory lookup,
+so HTML builds do not need network access. The API index links their upstream
+documentation. No import mocks or source-path overrides are used. Generated HTML
+is written to the ignored `docs/_build/html` directory.
 
 `.github/workflows/docs.yml` builds with the locked documentation dependencies,
-nitpicky reference checks and warnings treated as errors. Pull requests targeting
+nitpicky reference checks and warnings treated as errors, followed by the
+executable documentation examples. Pull requests targeting
 `master` build with read-only repository access. Pushes to `master`, and manual
 runs on `master`, upload that run's HTML and deploy it in a separate job using
 the `github-pages` environment. Only deployment receives `pages: write` and
