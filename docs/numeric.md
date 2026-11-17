@@ -247,8 +247,8 @@ def __iter__() -> Iterator[Logic]: ...
 def __getitem__(item: int | slice) -> Logic | Self: ...
 ```
 
-Parameters
-: - `other: Self | int | Logic | object`
+:Parameters:
+  - `other: Self | int | Logic | object`
 
     Right operand, or the left scalar for reflected methods. Arithmetic accepts
     same-type vectors and the scalar types in each signature. `Logic` arithmetic
@@ -265,8 +265,8 @@ Parameters
     HDL index, or an inclusive slice following the input direction. Slice steps
     are unsupported.
 
-Returns
-: Arithmetic, bitwise, and movement operators return a new value using the
+:Returns:
+  Arithmetic, bitwise, and movement operators return a new value using the
   width and range rules above. Comparisons return `bool`. `int()` performs
   explicit numeric conversion; `len()` returns width; `str()` returns logic
   characters; `repr()` includes type and range; iteration yields left-to-right

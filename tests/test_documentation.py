@@ -11,6 +11,7 @@ import subprocess
 import sys
 from collections import Counter
 from html import unescape
+from html.parser import HTMLParser
 from pathlib import Path
 from runpy import run_path
 from types import UnionType
@@ -189,8 +190,37 @@ def test_reference_matches_public_api() -> None:
 		assert methods.get(name, set()) == public_methods, name
 
 
+class _ArticleMarkup(HTMLParser):
+	"""Collect article prose while excluding rendered code and literal examples."""
+
+	def __init__(self) -> None:
+		super().__init__()
+		self.prose: list[str] = []
+		self._in_article = False
+		self._literal_depth = 0
+
+	def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+		"""Track the article and its literal content."""
+		if tag == "article":
+			self._in_article = True
+		if self._in_article and tag in ("pre", "code", "script", "style"):
+			self._literal_depth += 1
+
+	def handle_endtag(self, tag: str) -> None:
+		"""Finish literal content or the article."""
+		if self._in_article and tag in ("pre", "code", "script", "style"):
+			self._literal_depth -= 1
+		if tag == "article":
+			self._in_article = False
+
+	def handle_data(self, data: str) -> None:
+		"""Collect text that should have had its Markdown markup interpreted."""
+		if self._in_article and not self._literal_depth:
+			self.prose.append(data)
+
+
 def test_rendered_reference_layout(tmp_path: Path) -> None:
-	"""Build with the docs group and check parameter bullets, returns, and multiline signatures."""
+	"""Check site-wide markup, parameter bullets, returns, and multiline signatures."""
 	for module in ("sphinx", "myst_parser", "furo"):
 		pytest.importorskip(module, reason="the rendered layout check needs the docs dependency group")
 	root = Path(__file__).resolve().parents[1]
@@ -222,13 +252,36 @@ def test_rendered_reference_layout(tmp_path: Path) -> None:
 			continue
 		expected_fields.setdefault(path, []).extend(re.findall(r"^  - `(.+)`$", body, re.MULTILINE))
 		expected_returns[path] += 1
+	guide = root / "docs" / "numeric.md"
+	expected_fields[guide] = ["other: Self | int | Logic | object", "count: int", "item: int | slice"]
+	expected_returns[guide] = 1
 	for path, fields in expected_fields.items():
-		html = (tmp_path / "html" / "api" / path.with_suffix(".html").name).read_text(encoding="utf-8")
+		output = tmp_path / "html" / path.relative_to(root / "docs").with_suffix(".html")
+		html = output.read_text(encoding="utf-8")
 		labels = re.findall(r"<li><p><code\b[^>]*>(.*?)</code></p>\s*<p>\S", html, re.DOTALL)
 		rendered_fields = [unescape(re.sub(r"<[^>]+>", "", label)) for label in labels]
 		assert Counter(rendered_fields) == Counter(fields), path
 		assert html.count(">Returns<span") == expected_returns[path], path
 		assert "Return type" not in html, path
+		if path == guide:
+			parameters = re.search(
+				r"<dt\b[^>]*>Parameters<span[^>]*>:</span></dt>\s*<dd\b[^>]*><ul>(.*?)</ul>\s*</dd>",
+				html,
+				re.DOTALL,
+			)
+			assert parameters is not None, "operator parameters must form a field containing one list"
+			assert parameters[1].count("<li>") == 3, "operator parameters must be sibling list items"
+			assert "<ul>" not in parameters[1], "operator parameters must not nest inside another parameter"
+	for path in sorted((root / "docs").rglob("*.md")):
+		if "_build" in path.parts or path.name.startswith("_"):
+			continue
+		output = tmp_path / "html" / path.relative_to(root / "docs").with_suffix(".html")
+		article = _ArticleMarkup()
+		article.feed(output.read_text(encoding="utf-8"))
+		assert article.prose, path
+		prose = "".join(article.prose)
+		assert "`" not in prose, (path, "inline-code delimiters must not appear in rendered prose")
+		assert not re.search(r"\{(?:py:\w+|ref|doc)\}", prose), (path, "unprocessed MyST role")
 	for name, page in (("AxiStreamBus", "bus"), ("AxiStreamSource", "source"), ("AxiStreamSink", "sink")):
 		html = (tmp_path / "html" / "api" / f"{page}.html").read_text(encoding="utf-8")
 		signature = html.split(f'id="coaxi.{name}">', maxsplit=1)[1].split("</dt>", maxsplit=1)[0]

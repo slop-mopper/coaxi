@@ -452,9 +452,11 @@ The reference is curated independently of source docstrings;
 regressions compare its parameter names, kinds, defaults, and annotations against
 the installed public API, and check export/method coverage. With the docs group
 installed, a temporary strict HTML build checks parameter bullets, description
-paragraphs, the single Returns row, and multiline signatures. Distribution checks
-verify that all documentation sources are included in the sdist and generated
-HTML and doctrees are excluded.
+paragraphs, the single Returns row, and multiline signatures. It also checks
+the numeric guide's operator fields and scans every guide and reference page
+for unprocessed inline-code delimiters and MyST roles outside literal content.
+Distribution checks verify that all documentation sources are included in the
+sdist and generated HTML and doctrees are excluded.
 
 The tutorial includes `examples/stream_loopback.py` directly; the normal simulator
 suite runs that source in both write modes. Numeric examples run through Sphinx
