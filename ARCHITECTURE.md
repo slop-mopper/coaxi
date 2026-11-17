@@ -1,6 +1,4 @@
-# ARCHITECTURE.md
-# SPDX-License-Identifier: CC0-1.0
-# This file was created by an AI model: openai/gpt-6.1-sol
+# Architecture
 
 ## Project and package
 
@@ -239,7 +237,7 @@ COCOTB_USER_COVERAGE hook. Parallel data files prevent processes overwriting one
 another; the script combines them into a text report, coverage.json and htmlcov/.
 The separate consumer-installation test disables that hook, keeping its environment
 runtime-only. Coverage is a review aid, with no percentage threshold or new
-exclusions for hard-to-reach paths. See AXI_STREAM_REVIEW.md for findings and limits.
+exclusions for hard-to-reach paths.
 
 ## Independent reliability checks
 
@@ -373,6 +371,26 @@ Pytest, Pyrefly and Ruff are development dependencies. Pyrefly uses its defaults
 Ruff uses a 120-character line length, tab indentation, double quotes and
 docstring code formatting. The lint configuration ignores `I001` and `BLE001`;
 no additional lint rules are selected.
+
+## Documentation infrastructure
+
+`docs/conf.py` configures Sphinx with MyST Markdown, autodoc and the Furo theme.
+The `docs` dependency group is separate from runtime and development dependencies.
+The site currently contains only a title and empty navigation; no user guide or
+API reference has been written or migrated. Autodoc uses the installed package
+when reference pages are added; no import mocks or source-path overrides are used.
+Generated HTML is written to the ignored `docs/_build/html` directory.
+
+`.github/workflows/docs.yml` builds with the locked documentation dependencies,
+nitpicky reference checks and warnings treated as errors. Pull requests targeting
+`master` build with read-only repository access. Pushes to `master`, and manual
+runs on `master`, upload that run's HTML and deploy it in a separate job using
+the `github-pages` environment. Only deployment receives `pages: write` and
+`id-token: write`; it does not check out or execute project code. There is one
+current site, without release-version directories or pull-request deployments.
+GitHub Pages must be enabled with GitHub Actions as its publishing source.
+Documentation builds need Python and the package dependencies, with no NVC or
+simulation runs.
 
 ## Release automation
 

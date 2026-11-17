@@ -374,8 +374,6 @@ It writes a combined text report, `coverage.json` and `htmlcov/index.html`.
 Coverage.py is development-only; the consumer-installation check remains runtime-only.
 Use the uncovered lines/branches to investigate missing assertions and failure
 paths. There is no percentage target, and high coverage does not prove correctness.
-See [the static and coverage review](AXI_STREAM_REVIEW.md) for findings, regression
-tests and remaining gaps.
 
 ### Payloads
 

@@ -28,6 +28,11 @@ dev = [
 	"pyrefly",
 	"ruff",
 ]
+docs = [
+	"sphinx",
+	"myst-parser",
+	"furo",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

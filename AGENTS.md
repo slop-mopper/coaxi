@@ -1,6 +1,4 @@
-# AGENTS.md
-# SPDX-License-Identifier: CC0-1.0
-# This file was created by an AI model: openai/gpt-6.1-sol
+# Repository instructions
 
 ## Project purpose
 
@@ -135,6 +133,11 @@ messages at higher log levels.
   relevant.
 - Document behaviour that callers need to understand, especially reset,
   handshake timing, framing, payload conversion, and meta-value handling.
+- Documentation uses Sphinx, MyST Markdown and Furo under `docs/`, with tools
+  in the separate `docs` dependency group. Build with
+  `uv run --locked --group docs sphinx-build -M html docs docs/_build -n -W --keep-going`.
+- Keep the documentation site as a skeleton until the user supplies their
+  writing requirements. Do not migrate or write guides or API pages yet.
 
 ## Language and style
 
@@ -149,7 +152,9 @@ messages at higher log levels.
 
 ## Source headers and licence
 
-The project licence is CC0-1.0. Start every new first-party source file with:
+The project licence is CC0-1.0. Markdown files use ordinary document headings;
+do not add filename, SPDX or creating-model source headers to them.
+Start every other new first-party source file with:
 
 ```python
 # <FILENAME>

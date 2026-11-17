@@ -81,6 +81,9 @@ def check_distribution(dist: Path, tmp_path: Path) -> None:
 			"tests/check_release.py",
 			"tests/__init__.py",
 			"tests/test_release.py",
+			"tests/test_documentation.py",
+			"docs/conf.py",
+			"docs/index.md",
 			"RELEASING.md",
 			"tests/test_simulation.py",
 			"tests/test_typing.py",
@@ -154,7 +157,7 @@ assert Path(sys.prefix).resolve() == consumer
 assert Path(coaxi.__file__).is_relative_to(consumer), coaxi.__file__
 assert Path(distribution("coaxi").locate_file("")).resolve().is_relative_to(consumer)
 assert distribution("coaxi").version == sys.argv[2]
-for development_package in ("pyrefly", "ruff", "coverage"):
+for development_package in ("pyrefly", "ruff", "coverage", "sphinx", "myst-parser", "furo"):
 	try:
 		distribution(development_package)
 	except PackageNotFoundError:
