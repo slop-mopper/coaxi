@@ -100,6 +100,79 @@ def test_integer_checks(kind: type[Signed] | type[Unsigned]) -> None:
 		kind.from_int(1, width=cast(Any, 8.0))
 
 
+@pytest.mark.parametrize("kind", [Signed, Unsigned])
+@pytest.mark.parametrize("boolean", [False, True])
+def test_boolean_integer_values(kind: type[Signed] | type[Unsigned], boolean: bool) -> None:
+	"""Boolean values mean zero or one, with the same signed range and null rules as integers."""
+	number = int(boolean)
+	for width in (1, 2, 8, 257):
+		if kind is Signed and boolean and width == 1:
+			with pytest.raises(OverflowError):
+				kind.from_int(boolean, width=width)
+		else:
+			value = kind.from_int(boolean, width=width)
+			assert str(value) == "0" * (width - 1) + str(number)
+			assert value.to_int() == number
+			assert type(value.to_int()) is int
+	null = kind.from_int(boolean, width=0)
+	assert str(null) == "" and null.width == 0
+	assert (null.range.left, null.range.direction, null.range.right) == (0, "downto", 1)
+
+
+@pytest.mark.parametrize("kind", [Signed, Unsigned])
+@pytest.mark.parametrize("boolean", [False, True])
+def test_boolean_numeric_operands(kind: type[Signed] | type[Unsigned], boolean: bool) -> None:
+	"""Value validation continues to accept booleans in existing integer overloads."""
+	value = kind.from_int(3, width=4)
+	number = int(boolean)
+	for operation in [operator.add, operator.sub, operator.mul, operator.truediv, operator.mod]:
+		for left, right in [(value, boolean), (boolean, value)]:
+			if not boolean and right is boolean and operation in (operator.truediv, operator.mod):
+				with pytest.raises(ZeroDivisionError):
+					operation(left, right)
+			else:
+				actual = operation(left, right)
+				expected = operation(value, number) if right is boolean else operation(number, value)
+				assert str(actual) == str(expected)
+				assert actual.width == expected.width
+	assert str(value.rrem(boolean)) == ("0001" if boolean else "0000")
+	if boolean:
+		assert str(value.rem(boolean)) == "0000"
+	else:
+		with pytest.raises(ZeroDivisionError):
+			value.rem(boolean)
+	assert (value == boolean) == (value == number)
+	assert str(value.match_eq(boolean)) == str(value.match_eq(number))
+
+
+@pytest.mark.parametrize("kind", [Signed, Unsigned])
+@pytest.mark.parametrize("boolean", [False, True])
+def test_boolean_sizes_and_counts(kind: type[Signed] | type[Unsigned], boolean: bool) -> None:
+	"""Widths and movement counts reject bool, including null inputs and scalar-shift operators."""
+	for number in (0, 1, boolean):
+		with pytest.raises(TypeError, match="bool"):
+			kind.from_int(number, width=boolean)
+	for text in ("", "1", "HUX1"):
+		value = kind(LogicArray(text))
+		for operation in [
+			value.resize,
+			value.shift_left,
+			value.shift_right,
+			value.rotate_left,
+			value.rotate_right,
+			value.sll,
+			value.srl,
+			value.sla,
+			value.sra,
+			value.rol,
+			value.ror,
+			value.__lshift__,
+			value.__rshift__,
+		]:
+			with pytest.raises(TypeError, match="bool"):
+				operation(boolean)
+
+
 def test_sizes_and_overflow() -> None:
 	"""Arithmetic wraps at VHDL widths; checked input conversions never truncate."""
 	u = Unsigned.from_int(255, width=8)

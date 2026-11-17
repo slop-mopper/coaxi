@@ -24,14 +24,16 @@ def _warn(operation: str, reason: str) -> None:
 	warnings.warn(f"numeric_std {operation}: {reason}", NumericStdWarning, stacklevel=4)
 
 
-def _integer(value: int) -> int:
+def _integer(value: int, *, allow_bool: bool = True) -> int:
 	if not isinstance(value, int):
 		raise TypeError("expected a Python integer")
+	if isinstance(value, bool) and not allow_bool:
+		raise TypeError("expected a Python integer, not bool")
 	return value
 
 
-def _natural(value: int) -> int:
-	_integer(value)
+def _natural(value: int, *, allow_bool: bool = True) -> int:
+	_integer(value, allow_bool=allow_bool)
 	if value < 0:
 		raise ValueError("expected a non-negative integer")
 	return value
@@ -114,9 +116,9 @@ class _Numeric(_Bits):
 
 	@classmethod
 	def from_int(cls, value: int, *, width: int) -> Self:
-		"""Convert a Python integer, checking its range unless width is zero."""
+		"""Convert an integer or bool value; require a non-boolean width and check positive-width range."""
 		_integer(value)
-		_natural(width)
+		_natural(width, allow_bool=False)
 		if not cls._signed:
 			_natural(value)
 		if width == 0:
@@ -186,8 +188,8 @@ class _Numeric(_Bits):
 		return type(self)(value) if isinstance(value, LogicArray) else value
 
 	def resize(self, width: int) -> Self:
-		"""Apply VHDL resize, keeping the original sign on signed narrowing."""
-		_natural(width)
+		"""Apply VHDL resize with a non-boolean width, keeping the original sign on signed narrowing."""
+		_natural(width, allow_bool=False)
 		if not width:
 			return type(self)._null()
 		if not self.width:
@@ -518,7 +520,7 @@ class _Numeric(_Bits):
 		return self._reduce("xnor")
 
 	def _shift(self, count: int, right: bool, arithmetic: bool = False) -> Self:
-		_natural(count)
+		_natural(count, allow_bool=False)
 		if not self.width:
 			return type(self)._null()
 		if right and arithmetic and self._signed and (count == 0 or self.width == 1):
@@ -532,11 +534,11 @@ class _Numeric(_Bits):
 		return type(self)._new(text)
 
 	def shift_left(self, count: int) -> Self:
-		"""Shift left by a non-negative count, filling with zero."""
+		"""Shift left by a non-negative, non-boolean count, filling with zero."""
 		return self._shift(count, False)
 
 	def shift_right(self, count: int) -> Self:
-		"""Shift right by a non-negative count, extending the sign for Signed."""
+		"""Shift right by a non-negative, non-boolean count, extending the sign for Signed."""
 		return self._shift(count, True, True)
 
 	def __lshift__(self, count: int) -> Self:
@@ -548,23 +550,23 @@ class _Numeric(_Bits):
 		return self.shift_right(count)
 
 	def sll(self, count: int) -> Self:
-		"""Apply VHDL sll; a negative count shifts logically right."""
-		_integer(count)
+		"""Apply VHDL sll with a non-boolean count; a negative count shifts logically right."""
+		_integer(count, allow_bool=False)
 		return self._shift(abs(count), count < 0)
 
 	def srl(self, count: int) -> Self:
-		"""Apply VHDL srl; a negative count shifts left."""
-		_integer(count)
+		"""Apply VHDL srl with a non-boolean count; a negative count shifts left."""
+		_integer(count, allow_bool=False)
 		return self._shift(abs(count), count >= 0)
 
 	def sla(self, count: int) -> Self:
-		"""Apply VHDL sla; a negative count shifts right with sign extension."""
-		_integer(count)
+		"""Apply VHDL sla with a non-boolean count; a negative count shifts right with sign extension."""
+		_integer(count, allow_bool=False)
 		return self._shift(abs(count), count < 0, True)
 
 	def sra(self, count: int) -> Self:
-		"""Apply VHDL sra; a negative count shifts left."""
-		_integer(count)
+		"""Apply VHDL sra with a non-boolean count; a negative count shifts left."""
+		_integer(count, allow_bool=False)
 		return self._shift(abs(count), count >= 0, True)
 
 	def _rotate(self, count: int) -> Self:
@@ -574,23 +576,23 @@ class _Numeric(_Bits):
 		return type(self)._new(self._text[count:] + self._text[:count])
 
 	def rotate_left(self, count: int) -> Self:
-		"""Rotate left by a non-negative count."""
-		_natural(count)
+		"""Rotate left by a non-negative, non-boolean count."""
+		_natural(count, allow_bool=False)
 		return self._rotate(count)
 
 	def rotate_right(self, count: int) -> Self:
-		"""Rotate right by a non-negative count."""
-		_natural(count)
+		"""Rotate right by a non-negative, non-boolean count."""
+		_natural(count, allow_bool=False)
 		return self._rotate(-count)
 
 	def rol(self, count: int) -> Self:
-		"""Apply VHDL rol; a negative count rotates right."""
-		_integer(count)
+		"""Apply VHDL rol with a non-boolean count; a negative count rotates right."""
+		_integer(count, allow_bool=False)
 		return self._rotate(count)
 
 	def ror(self, count: int) -> Self:
-		"""Apply VHDL ror; a negative count rotates left."""
-		_integer(count)
+		"""Apply VHDL ror with a non-boolean count; a negative count rotates left."""
+		_integer(count, allow_bool=False)
 		return self._rotate(-count)
 
 	def concat(self, other: Self | Logic) -> Self:

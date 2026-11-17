@@ -31,6 +31,20 @@ Use `from_int()` for Python integers; positive widths are checked.
 Unsigned input integers must be non-negative. Width-zero conversion returns
 a null vector, following VHDL, even when the input integer is nonzero.
 
+`from_int()` accepts `False` as zero and `True` as one, with the usual range
+checks. Widths and shift/rotation counts require integers other than booleans;
+passing `True` or `False` for these parameters raises `TypeError`, including
+when operating on a null vector.
+
+```{doctest}
+>>> str(Unsigned.from_int(True, width=8))
+'00000001'
+>>> Unsigned.from_int(0, width=False)
+Traceback (most recent call last):
+...
+TypeError: expected a Python integer, not bool
+```
+
 `to_int()` and `int(x)` interpret weak `L` and `H` numerically and raise
 `ValueError` for other meta-values. A null vector warns and converts to zero.
 Python integer conversions support arbitrary precision. Conversion of a

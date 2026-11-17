@@ -6,15 +6,19 @@
 :Parameters:
   - `value: int`
 
-    Python integer. `Unsigned` requires a non-negative value.
+    Python integer, including `False` as zero and `True` as one.
+    `Unsigned` requires a non-negative value.
 
   - `width: int`
 
-    Non-negative bit count. At positive widths, the integer must fit the type.
+    Non-negative bit count; booleans raise `TypeError`.
+    At positive widths, the integer must fit the type.
     At zero width, return a null vector regardless of the integer's magnitude.
 
 :returns: A value with range `width - 1 downto 0`, or `0 downto 1` at zero width.
 :raises OverflowError: The integer does not fit a positive width.
+:raises TypeError: `value` is not an integer, or `width` is not an integer or is a boolean.
+:raises ValueError: `width` is negative, or an `Unsigned` input value is negative.
 ```
 
 ```{py:method} to_int() -> int
@@ -44,7 +48,8 @@
 :Parameters:
   - `width: int`
 
-    Non-negative result bit count. Unsigned widening adds zeros; signed widening
+    Non-negative result bit count; booleans raise `TypeError`.
+    Unsigned widening adds zeros; signed widening
     copies the raw sign bit. Unsigned narrowing keeps the low bits. Signed
     narrowing keeps the original sign and the lowest `width - 1` bits.
 
@@ -242,7 +247,9 @@ including `1 to 0` for null vectors.
 
 Movement copies raw logic states. Results use `width - 1 downto 0`, with
 `0 downto 1` for null vectors. Signed arithmetic-right shifts keep the input
-range when the count is zero or the input has one bit.
+range when the count is zero or the input has one bit. All movement counts
+require integers other than booleans; `True` and `False` raise `TypeError`,
+including for null inputs.
 
 ```{py:method} shift_left(count: int) -> Self
 

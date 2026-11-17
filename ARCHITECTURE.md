@@ -26,7 +26,9 @@ inheriting integer format rules. Fixed-point types are not implemented.
 Constructors copy `LogicArray` or numeric values, including their index range.
 Cross-signedness construction reinterprets bits. Python-integer conversion is
 explicit; positive-width input conversions raise `OverflowError` when the
-integer does not fit. Width-zero conversion follows the package's null return.
+integer does not fit. Boolean numeric inputs mean zero or one. Widths and
+shift/rotation counts reject booleans with `TypeError`, including on null inputs.
+Width-zero conversion follows the package's null return.
 Integer operation overloads use the package's operation-specific conversions;
 ordinary comparisons can compare against integers outside the vector range.
 Arithmetic results follow VHDL widths and wrap, including scalar division
