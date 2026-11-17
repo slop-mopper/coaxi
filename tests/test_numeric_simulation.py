@@ -20,6 +20,7 @@ def test_numeric_simulation(
 	monkeypatch: pytest.MonkeyPatch,
 ) -> None:
 	"""Require a successful bounded cocotb test against the numeric_std port fixture."""
+	monkeypatch.delenv("PYTHONOPTIMIZE", raising=False)
 	monkeypatch.setenv("COCOTB_TRUST_INERTIAL_WRITES", trust_inertial)
 	monkeypatch.setenv("COCOTB_RESOLVE_X", resolve_x)
 	tests = Path(__file__).parent.resolve()

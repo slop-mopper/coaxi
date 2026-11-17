@@ -33,7 +33,10 @@ a null vector, following VHDL, even when the input integer is nonzero.
 
 `to_int()` and `int(x)` interpret weak `L` and `H` numerically and raise
 `ValueError` for other meta-values. A null vector warns and converts to zero.
-Python integer conversions support arbitrary precision.
+Python integer conversions support arbitrary precision. Conversion of a
+resolved, non-null value produces no warnings. The VHDL package body can warn
+while converting a one-bit signed `-1` through an internal scalar addition;
+Python conversion returns `-1` without that intermediate operation.
 
 `to_logic_array()` returns a separate mutable array. Mutating an input or
 exported array does not change the numeric value. Use the exported array when

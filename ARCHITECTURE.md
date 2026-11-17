@@ -52,9 +52,29 @@ logic states, seeded larger vectors, scalar overloads, and null values.
 It runs with NVC C intrinsics enabled and disabled. Two narrowly checked NVC
 1.21.1 null-range differences are allowed in the oracle: the C resize result
 at zero width, and the bounds of concatenated null vectors. Python unit tests
-require IEEE ranges for both. A separate failing-oracle suite verifies package
-errors. Cocotb port tests exercise real signed/unsigned HDL arithmetic in both
-write modes and with conflicting meta-value resolution settings.
+require IEEE ranges for both. The oracle also accounts for the package body's
+internal truncation warning when converting a one-bit signed -1 to an integer;
+Python `to_int()` and NVC's intrinsic return -1 without that internal conversion.
+Expected errors are classified from input shapes and overload rules before
+Python evaluation. An unexpected exception fails instead of dropping a row.
+Ordered result markers, per-case warning attribution, and a completion marker
+detect incomplete or malformed simulator output. A separate failing-oracle
+suite requires successful compilation and the intended runtime package
+diagnostic, with C intrinsics enabled and disabled.
+
+Additional tests exhaust literal-bit vector arithmetic and ordinary comparisons
+at widths one through five against Python mathematics and modulo encoding.
+Fresh-interpreter tests set `COCOTB_RESOLVE_X` before importing cocotb and
+check unresolved integer conversion independently of the configured resolver.
+Cocotb port tests exercise real signed/unsigned HDL arithmetic in both
+write-scheduling settings and with conflicting meta-value resolution settings.
+
+`tests/run_numeric_mutations.py` probes eleven selected implementation faults in
+temporary copies. Passing controls, unchanged source hashes, full test inventories,
+import-origin checks, and structured pytest phase/exception reports prevent
+unrelated failures from counting as detections. Harness regressions check
+invalid evidence and timeout cleanup. Coverage supplies investigation data;
+neither coverage nor mutation counts act as acceptance thresholds.
 
 ## Components
 

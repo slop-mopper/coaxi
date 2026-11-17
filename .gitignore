@@ -14,3 +14,4 @@ docs/_build/
 coverage.json
 htmlcov/
 reliability-results.json
+numeric-mutation-results.json

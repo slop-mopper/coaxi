@@ -34,6 +34,7 @@ uv run python tests/run_reliability.py
 uv run python tests/run_reliability.py --seeds 73 2028 --rounds 240
 uv run python tests/run_reliability.py --mutations
 uv run python tests/run_coverage.py
+uv run python tests/run_numeric_mutations.py
 ```
 
 Ordinary regression uses seeds `73`, `2028`, and `65537`, with 24 lifecycle
@@ -47,7 +48,29 @@ unchanged. A successful run writes `reliability-results.json`.
 Do not disable assertions with `-O` or `PYTHONOPTIMIZE`.
 
 Coverage combines Python and cocotb branch data into `coverage.json` and
-`htmlcov/` for review.
+`htmlcov/` for review. Use uncovered paths to guide investigation; executing
+every branch does not establish that its assertions detect wrong results.
+
+Numeric tests compare bits, widths, ranges, and warnings against an independent
+NVC `numeric_std` oracle, with C intrinsics enabled and disabled. Expected
+Python exceptions are classified before evaluating a case; an unexpected
+exception fails the test. A separate error oracle requires compilation to
+succeed and the intended runtime diagnostic to follow. Both use bounded
+subprocess timeouts.
+
+All binary arithmetic and ordinary comparisons are also checked for every
+pair of literal-bit operands at widths one through five, including mixed
+widths. Python integer mathematics and explicit modulo encoding supply the
+expected results. Other tests check 521-bit conversion patterns, distinct
+null-array bounds, and cocotb resolver settings in fresh interpreters.
+
+`run_numeric_mutations.py` checks eleven selected faults in temporary copies.
+Each selected test must pass against an unmodified copy first. Mutant runs
+must execute the same test cases and fail at the intended assertion during
+the test call. Collection errors, fixture failures, unrelated exceptions,
+skips, and timeouts fail the harness. Successful runs write
+`numeric-mutation-results.json`; they do not modify the working package.
+These probes test specific assertions and do not measure all possible faults.
 
 ## Releases and hosting
 

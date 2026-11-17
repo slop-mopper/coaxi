@@ -17,6 +17,8 @@ from coaxi import Signed, Unsigned
 @cocotb.test(timeout_time=10, timeout_unit="us")
 async def numeric_values(dut: HierarchyObject) -> None:
 	"""Check cocotb snapshots and drives against concurrent VHDL arithmetic."""
+	if not __debug__:
+		raise RuntimeError("numeric assertions require Python without optimisation")
 	seed = 0x51_6E_ED
 	dut._log.debug("numeric interoperation seed=%d", seed)
 	random_source = random.Random(seed)
@@ -26,6 +28,14 @@ async def numeric_values(dut: HierarchyObject) -> None:
 		a = Signed(LogicArray(text))
 		b = Signed(LogicArray(texts[(index + 1) % len(texts)]))
 		u, v = Unsigned(a), Unsigned(b)
+		if not a.is_resolvable:
+			for value in (a, u):
+				try:
+					value.to_int()
+				except ValueError:
+					pass
+				else:
+					raise AssertionError("unresolved integer conversion silently resolved bits")
 		dut.a.value = a.to_logic_array()
 		dut.b.value = b.to_logic_array()
 		dut.u.value = u.to_logic_array()
