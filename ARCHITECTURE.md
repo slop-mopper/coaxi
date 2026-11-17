@@ -14,6 +14,48 @@ Data/ready omissions and continuous queued capture without ready are supported.
 Optional reset-pin monitoring supports active-low and active-high interfaces.
 AXI4 memory-mapped and AXI4-Lite are not implemented.
 
+## Numeric values
+
+`Signed` and `Unsigned` are immutable VHDL-2008 `ieee.numeric_std` values.
+`_bits.py` stores logic characters and range bounds without a numeric
+interpretation. `_numeric.py` supplies integer arithmetic, signedness,
+nine-state logic, comparisons, shifts, rotations, reductions, and concatenation.
+This separation allows future fixed-point types to share bit storage without
+inheriting integer format rules. Fixed-point types are not implemented.
+
+Constructors copy `LogicArray` or numeric values, including their index range.
+Cross-signedness construction reinterprets bits. Python-integer conversion is
+explicit; positive-width input conversions raise `OverflowError` when the
+integer does not fit. Width-zero conversion follows the package's null return.
+Integer operation overloads use the package's operation-specific conversions;
+ordinary comparisons can compare against integers outside the vector range.
+Arithmetic results follow VHDL widths and wrap, including scalar division
+shortcuts and signed `mod` behaviour with a raw weak sign bit.
+
+Vector arithmetic normalises weak bits and produces all-X results for other
+meta-values. The oversized scalar-divisor shortcut returns zeros before
+checking meta-values. Logical operations use cocotb's IEEE nine-state scalar tables;
+movement and reinterpretation copy raw states. Explicit integer conversion
+rejects unresolved states independently of `COCOTB_RESOLVE_X`. Package warnings
+use `NumericStdWarning`; error-severity operations use Python exceptions.
+Null results and operation-specific ranges follow the package, including
+ascending scalar-logical results and concatenation.
+
+These types have no scheduling or handle access. Existing payload APIs still
+use explicit `to_logic_array()` conversion; `PayloadValue` and the existing
+`to_signed`/`to_unsigned` integer helpers are unchanged.
+
+Python contract tests cover copying, immutability, conversion checks, and
+diagnostics. The independent NVC oracle compares bits, index ranges, comparison
+results, and warning presence across small exhaustive operands, all nine
+logic states, seeded larger vectors, scalar overloads, and null values.
+It runs with NVC C intrinsics enabled and disabled. Two narrowly checked NVC
+1.21.1 null-range differences are allowed in the oracle: the C resize result
+at zero width, and the bounds of concatenated null vectors. Python unit tests
+require IEEE ranges for both. A separate failing-oracle suite verifies package
+errors. Cocotb port tests exercise real signed/unsigned HDL arithmetic in both
+write modes and with conflicting meta-value resolution settings.
+
 ## Components
 
 - `_binding.py` resolves each protocol role to an independent HDL handle.

@@ -17,6 +17,7 @@ and AXI5-Stream wake-up and parity extensions are not implemented.
 getting-started
 binding
 payloads
+numeric
 transfers
 sidebands
 lifecycle

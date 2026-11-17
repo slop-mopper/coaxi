@@ -18,6 +18,8 @@ sidebands
 handle-payload
 payload
 types
+signed
+unsigned
 ```
 
 ## Errors
@@ -29,6 +31,7 @@ signal-binding-error
 protocol-value-error
 endpoint-state-error
 transfer-reset
+numeric-std-warning
 ```
 
 Conversion and argument checks can also raise `TypeError`, `ValueError`, or

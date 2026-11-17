@@ -16,12 +16,12 @@ from runpy import run_path
 from types import UnionType
 from functools import reduce
 from operator import or_
-from typing import Any, Self, TypeAliasType, get_args, get_origin
+from typing import Any, Self, TypeAliasType, get_args, get_origin, get_type_hints
 from collections.abc import Iterator, Mapping, Sequence
 
 import coaxi
 import pytest
-from cocotb.types import Logic, LogicArray
+from cocotb.types import Logic, LogicArray, Range
 from cocotb.handle import HierarchyObject, LogicArrayObject, LogicObject, SimHandleBase
 
 
@@ -30,8 +30,23 @@ def _reference_entries() -> Iterator[tuple[Path, str, str, str]]:
 	api = Path(__file__).resolve().parents[1] / "docs" / "api"
 	pattern = r"^```\{py:(class|exception|method|function|type)\} ([^\n]+)\n(.*?)^```"
 	for path in sorted(api.glob("*.md")):
-		for match in re.finditer(pattern, path.read_text(encoding="utf-8"), re.MULTILINE | re.DOTALL):
-			yield path, *match.groups()
+		text = path.read_text(encoding="utf-8")
+		if path.stem in ("signed", "unsigned"):
+			# The included handwritten method contracts are shared by both classes.
+			# Expand them here as Sphinx does inside the enclosing class directive.
+			name = path.stem.title()
+			declaration, body = re.search(
+				r"^````\{py:class\} ([^\n]+)\n(.*?)^````", text, re.MULTILINE | re.DOTALL
+			).groups()
+			body = body.split("```{include}", 1)[0]
+			yield path, "class", declaration, body
+			shared = (api.parent / "_numeric-methods.md").read_text(encoding="utf-8")
+			for match in re.finditer(pattern, shared, re.MULTILINE | re.DOTALL):
+				kind, declaration, body = match.groups()
+				yield path, kind, f"{name}.{declaration}", body
+		else:
+			for match in re.finditer(pattern, text, re.MULTILINE | re.DOTALL):
+				yield path, *match.groups()
 
 
 def _reference_namespace(owner: Any) -> dict[str, Any]:
@@ -43,6 +58,7 @@ def _reference_namespace(owner: Any) -> dict[str, Any]:
 		"Mapping": Mapping,
 		"Logic": Logic,
 		"LogicArray": LogicArray,
+		"Range": Range,
 		"HierarchyObject": HierarchyObject,
 		"LogicObject": LogicObject,
 		"LogicArrayObject": LogicArrayObject,
@@ -55,7 +71,9 @@ def _reference_namespace(owner: Any) -> dict[str, Any]:
 
 
 def _public_annotation(annotation: Any) -> Any:
-	"""Expand private control aliases; public aliases remain named in the reference."""
+	"""Expand private aliases and normalise evaluated None return annotations."""
+	if annotation is type(None):
+		return None
 	if isinstance(annotation, TypeAliasType) and annotation.__name__.startswith("_"):
 		return _public_annotation(annotation.__value__)
 	if get_origin(annotation) is UnionType:
@@ -146,13 +164,14 @@ def test_reference_matches_public_api() -> None:
 			assert list(parameters) == ["args"]  # BaseException has no inspectable signature.
 		else:
 			implemented = inspect.signature(actual)
+			hints = get_type_hints(actual.__init__ if inspect.isclass(actual) else actual)
 			implemented = implemented.replace(
 				parameters=[
-					p.replace(annotation=_public_annotation(p.annotation))
+					p.replace(annotation=_public_annotation(hints.get(p.name, p.annotation)))
 					for p in implemented.parameters.values()
 					if p.name not in ("self", "cls")
 				],
-				return_annotation=_public_annotation(implemented.return_annotation),
+				return_annotation=_public_annotation(hints.get("return", implemented.return_annotation)),
 			)
 			assert documented == implemented, (name, documented, implemented)
 			assert (":async:" in body) == inspect.iscoroutinefunction(actual), name

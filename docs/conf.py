@@ -11,7 +11,7 @@ release = _distribution_version("coaxi")
 
 extensions = ["myst_parser", "sphinx.ext.autodoc", "sphinx.ext.doctest"]
 root_doc = "index"
-exclude_patterns = ["_build"]
+exclude_patterns = ["_build", "_numeric-methods.md"]
 myst_heading_anchors = 3
 myst_enable_extensions = ["fieldlist"]
 python_maximum_signature_line_length = 88
@@ -21,7 +21,17 @@ python_trailing_comma_in_multi_line_signatures = True
 # unresolved coaxi references must still fail the nitpicky build.
 nitpick_ignore = [
 	("py:class", name)
-	for name in ("SimHandleBase", "HierarchyObject", "LogicObject", "LogicArrayObject", "Logic", "LogicArray", "T")
+	for name in (
+		"SimHandleBase",
+		"HierarchyObject",
+		"LogicObject",
+		"LogicArrayObject",
+		"Logic",
+		"LogicArray",
+		"Range",
+		"Self",
+		"T",
+	)
 ]
 
 html_theme = "furo"

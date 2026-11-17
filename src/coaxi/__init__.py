@@ -5,6 +5,7 @@
 """coaxi: AXI-Stream helpers with independent signal binding and structured payloads."""
 
 from ._binding import AxiStreamBus, Signal, SignalBindingError
+from ._numeric import NumericStdWarning, Signed, Unsigned
 from ._payload import HandlePayload, Payload, PayloadValue, to_signed, to_unsigned
 from ._sideband import AxiStreamSidebands, SidebandValue
 from ._stream import (
@@ -24,13 +25,16 @@ __all__ = [
 	"AxiStreamTransfer",
 	"EndpointStateError",
 	"HandlePayload",
+	"NumericStdWarning",
 	"Payload",
 	"PayloadValue",
 	"ProtocolValueError",
 	"SidebandValue",
 	"Signal",
 	"SignalBindingError",
+	"Signed",
 	"TransferReset",
+	"Unsigned",
 	"to_signed",
 	"to_unsigned",
 ]

@@ -76,6 +76,22 @@ would allow cocotb to resolve them. Weak `L` and `H` are resolvable for numeric
 conversion. Sampled handshake controls, accepted `last`, and monitored reset
 require literal `0` or `1`; weak values also fail there.
 
+## Numeric values
+
+{py:class}`coaxi.Signed` and {py:class}`coaxi.Unsigned` provide VHDL-width
+arithmetic on snapshots. Convert explicitly when using the default payload adapter:
+
+```python
+from coaxi import Signed
+
+sample = Signed.from_int(-12, width=16)
+await source.send(sample.to_logic_array())
+```
+
+Received vectors can be interpreted with `Signed(transfer.data)` when the
+payload is a `LogicArray`. Numeric construction copies the snapshot.
+See [Numeric values](numeric.md) for integer overloads, wraparound, and meta-values.
+
 ## Application-defined types
 
 Implement {py:class}`coaxi.Payload` to use an application value type. The

@@ -35,7 +35,16 @@ def check_distribution(dist: Path, tmp_path: Path) -> None:
 	metadata = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
 	version = metadata["project"]["version"]
 	licence = (root / "LICENSE.txt").read_bytes()
-	package_files = {"__init__.py", "_binding.py", "_payload.py", "_sideband.py", "_stream.py", "py.typed"}
+	package_files = {
+		"__init__.py",
+		"_binding.py",
+		"_bits.py",
+		"_numeric.py",
+		"_payload.py",
+		"_sideband.py",
+		"_stream.py",
+		"py.typed",
+	}
 	wheel_path, source_path = distribution_paths(dist, version)
 	with zipfile.ZipFile(wheel_path) as wheel:
 		files = set(wheel.namelist())
@@ -88,6 +97,13 @@ def check_distribution(dist: Path, tmp_path: Path) -> None:
 			"tests/test_simulation.py",
 			"tests/test_typing.py",
 			"tests/test_values.py",
+			"tests/test_numeric.py",
+			"tests/test_numeric_vhdl.py",
+			"tests/test_numeric_errors.py",
+			"tests/test_numeric_documentation.py",
+			"tests/test_numeric_simulation.py",
+			"tests/numeric_cases.py",
+			"tests/hdl/numeric_dut.vhd",
 			"tests/stream_cases.py",
 			"tests/full_rate_cases.py",
 			"tests/frame_cases.py",
@@ -183,6 +199,22 @@ for name, module in list(sys.modules.items()):
 		assert Path(module.__file__).is_relative_to(consumer), (name, module.__file__)
 assert coaxi.to_unsigned(LogicArray("1010")) == 10
 assert coaxi.to_signed(LogicArray("1111")) == -1
+u = coaxi.Unsigned.from_int(255, width=8)
+assert (u + 1).to_int() == 0
+assert (u * 2).width == 16 and (u * 2).to_int() == 510
+assert coaxi.Signed(u).to_int() == -1
+assert str(coaxi.Signed(u).to_logic_array()) == "11111111"
+try:
+	coaxi.Signed(LogicArray("X001")).to_int()
+except ValueError:
+	pass
+else:
+	raise AssertionError("unresolved numeric value was converted")
+import warnings
+with warnings.catch_warnings(record=True) as caught:
+	warnings.simplefilter("always", coaxi.NumericStdWarning)
+	assert not (coaxi.Signed(LogicArray("X001")) == 0)
+assert len(caught) == 1 and caught[0].category is coaxi.NumericStdWarning
 assert coaxi.AxiStreamSidebands().keep is None
 assert coaxi.AxiStreamTransfer(42, None).user is None
 try:

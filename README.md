@@ -33,6 +33,10 @@ reset pins with configurable polarity. Signal names can be unrelated; each
 role accepts a name or a cocotb handle. Payload access is separate from handshake
 and framing logic.
 
+`Signed` and `Unsigned` provide immutable VHDL-2008 `numeric_std` values,
+with VHDL-width arithmetic, explicit integer conversion, and cocotb `LogicArray`
+interoperation. See [Numeric values](https://slop-mopper.github.io/coaxi/numeric.html).
+
 AXI4 memory-mapped, AXI4-Lite, and AXI5-Stream extensions are not implemented.
 Tests cover Python 3.13.5, cocotb 2.1.0, and NVC 1.21.1 on Linux.
 
