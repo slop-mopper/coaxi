@@ -24,6 +24,19 @@ def check_release_ref(root: Path, ref: str) -> str:
 	return version
 
 
+def release_destination(event: str, destination: str) -> str:
+	"""Return the index for a push or workflow_dispatch event.
+
+	Tag pushes always select pypi, ignoring destination. Manual dispatch requires
+	destination to be exactly pypi or test-pypi. Other events are rejected.
+	"""
+	if event == "push":
+		return "pypi"
+	if event == "workflow_dispatch" and destination in {"pypi", "test-pypi"}:
+		return destination
+	raise ValueError(f"Unsupported release event or destination: {event!r}, {destination!r}")
+
+
 def distribution_paths(dist: Path, version: str) -> tuple[Path, Path]:
 	"""Return the wheel and sdist for version in dist, rejecting missing, stale or linked files."""
 	wheel = dist / f"coaxi-{version}-py3-none-any.whl"
@@ -42,5 +55,10 @@ def distribution_paths(dist: Path, version: str) -> tuple[Path, Path]:
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser(description=__doc__)
 	parser.add_argument("ref", help="Full triggering Git ref, for example refs/tags/v1.0.0")
+	parser.add_argument("--event", default="workflow_dispatch", help="GitHub event name: push or workflow_dispatch")
+	parser.add_argument("--destination", default="test-pypi", help="Manual package index: pypi or test-pypi")
 	arguments = parser.parse_args()
-	print(check_release_ref(Path(__file__).resolve().parents[1], arguments.ref))
+	version = check_release_ref(Path(__file__).resolve().parents[1], arguments.ref)
+	destination = release_destination(arguments.event, arguments.destination)
+	# Both checks must succeed before exposing outputs to downstream workflow jobs.
+	print(f"version={version}\ndestination={destination}")

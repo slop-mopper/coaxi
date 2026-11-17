@@ -376,12 +376,16 @@ no additional lint rules are selected.
 
 ## Release automation
 
-`.github/workflows/release.yml` is a manually dispatched, version-tag-only
-workflow. Its destination choice defaults to `test-pypi`; production uses `pypi`.
-These exact GitHub environment names form part of the Trusted Publisher identity.
-`tests/check_release.py` requires the full ref to match the static project version
-and checks the locked project version. It also rejects missing, extra or linked
-distribution files; uv's `.gitignore` marker is permitted but never uploaded.
+`.github/workflows/release.yml` runs on pushed `v*` tags and manual dispatch.
+Tag pushes select production `pypi`; manual runs can select either index and
+retain `test-pypi` as their default. These exact GitHub environment names form
+part of the Trusted Publisher identity. `tests/check_release.py` requires the
+full ref to match the static project version and checks the locked project version.
+It resolves the event's destination into a build-job output used for the publish
+condition, environment and upload URL; unknown events or manual choices fail.
+It also rejects missing, extra or linked distribution files; uv's `.gitignore`
+marker is permitted but never uploaded. Concurrency groups include both the
+version ref and destination, so one version cannot replace another pending release.
 
 The read-only validation/build job pins Ubuntu 24.04, uv, Python 3.13.5 and an
 official SHA-256-checked NVC 1.21.1 Ubuntu package. It installs locked development
@@ -397,5 +401,6 @@ A commit-pinned PyPA action verifies metadata, generates provenance attestations
 and uploads with OIDC Trusted Publishing. Duplicate uploads fail visibly.
 GitHub environment approval/tag restrictions and the PyPI/TestPyPI publishers
 require external configuration. `RELEASING.md` documents this configuration,
-manual dispatch and recovery limitations. Separate destination runs rebuild;
-this does not implement cross-index byte-for-byte artefact promotion.
+automatic tag publishing, manual dispatch and recovery limitations. Separate
+destination runs rebuild; this does not implement cross-index byte-for-byte
+artefact promotion.

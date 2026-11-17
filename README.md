@@ -38,9 +38,10 @@ source checkout or unpacked source distribution.
 
 ## Releases
 
-Maintainers can publish manually from matching version tags using GitHub Actions
-and PyPI Trusted Publishing. See [RELEASING.md](RELEASING.md) for the
-`test-pypi` rehearsal, production approval and first-release steps.
+Pushing a matching `v<version>` tag starts production publishing through GitHub
+Actions and PyPI Trusted Publishing, subject to environment approval rules.
+Manual runs can select either index. See [RELEASING.md](RELEASING.md) for release
+preparation, optional TestPyPI checks and recovery.
 
 ## Signal names
 

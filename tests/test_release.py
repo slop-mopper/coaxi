@@ -5,6 +5,7 @@
 """Regression tests for build-free release guards; no package-index access or uploads."""
 
 import sys
+import tomllib
 import subprocess
 from pathlib import Path
 
@@ -12,6 +13,7 @@ import pytest
 
 from tests.check_release import check_release_ref
 from tests.check_release import distribution_paths
+from tests.check_release import release_destination
 
 
 def _project(root: Path, version: str = "1.0.0", locked: str = "1.0.0") -> None:
@@ -50,6 +52,139 @@ def test_stale_release_lock(tmp_path: Path) -> None:
 	_project(tmp_path, locked="0.1.0")
 	with pytest.raises(ValueError, match="uv.lock"):
 		check_release_ref(tmp_path, "refs/tags/v1.0.0")
+
+
+@pytest.mark.parametrize(
+	("event", "destination", "expected"),
+	[
+		("push", "", "pypi"),
+		("push", "test-pypi", "pypi"),
+		("push", "pypi", "pypi"),
+		("workflow_dispatch", "pypi", "pypi"),
+		("workflow_dispatch", "test-pypi", "test-pypi"),
+	],
+)
+def test_release_destination(event: str, destination: str, expected: str) -> None:
+	"""Tag pushes select production; explicit manual runs can select either index."""
+	assert release_destination(event, destination) == expected
+
+
+@pytest.mark.parametrize(
+	("event", "destination"),
+	[
+		("pull_request", "pypi"),
+		("release", "pypi"),
+		("", "pypi"),
+		("workflow_dispatch", ""),
+		("workflow_dispatch", "testpypi"),
+		("workflow_dispatch", "pypi\n"),
+	],
+)
+def test_invalid_release_destination(event: str, destination: str) -> None:
+	"""Unknown events and missing or malformed manual selections fail closed."""
+	with pytest.raises(ValueError, match="Unsupported release"):
+		release_destination(event, destination)
+
+
+@pytest.mark.parametrize(
+	("event", "destination", "expected"),
+	[("push", "", "pypi"), ("workflow_dispatch", "pypi", "pypi"), ("workflow_dispatch", "test-pypi", "test-pypi")],
+)
+def test_release_cli_outputs(event: str, destination: str, expected: str) -> None:
+	"""The exact guard command used in CI emits the effective destination for the publish job."""
+	root = Path(__file__).resolve().parents[1]
+	version = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+	result = subprocess.run(
+		[
+			sys.executable,
+			"tests/check_release.py",
+			f"refs/tags/v{version}",
+			"--event",
+			event,
+			"--destination",
+			destination,
+		],
+		cwd=root,
+		check=True,
+		capture_output=True,
+		text=True,
+		timeout=30,
+	)
+	assert result.stdout.splitlines() == [f"version={version}", f"destination={expected}"]
+
+
+@pytest.mark.parametrize(
+	("ref", "event", "destination"),
+	[
+		("refs/heads/master", "push", ""),
+		("refs/tags/v-mismatch", "push", ""),
+		(None, "workflow_dispatch", ""),
+		(None, "workflow_dispatch", "testpypi"),
+		(None, "pull_request", "pypi"),
+	],
+)
+def test_release_cli_rejects_without_outputs(ref: str | None, event: str, destination: str) -> None:
+	"""Invalid refs, events and destinations must fail before publishing any workflow output."""
+	root = Path(__file__).resolve().parents[1]
+	version = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+	result = subprocess.run(
+		[
+			sys.executable,
+			"tests/check_release.py",
+			ref if ref is not None else f"refs/tags/v{version}",
+			"--event",
+			event,
+			"--destination",
+			destination,
+		],
+		cwd=root,
+		check=False,
+		capture_output=True,
+		text=True,
+		timeout=30,
+	)
+	assert result.returncode != 0
+	assert result.stdout == ""
+	assert "ValueError:" in result.stderr
+
+
+def test_workflow_release_wiring() -> None:
+	"""Static wiring checks complement Actionlint; they do not simulate GitHub event delivery."""
+	root = Path(__file__).resolve().parents[1]
+	workflow = (root / ".github/workflows/release.yml").read_text(encoding="utf-8")
+	assert '\n  push:\n    tags:\n      - "v*"\n' in workflow
+	assert "\n  workflow_dispatch:\n" in workflow
+	effective_index = "${{ github.event_name == 'push' && 'pypi' || inputs.destination }}"
+	assert f"group: release-${{{{ github.ref }}}}-{effective_index}" in workflow
+	assert "cancel-in-progress: false" in workflow
+	assert "description: Package index\n" in workflow
+	assert "default: test-pypi\n" in workflow
+	validation, publish = workflow.split("\n  publish:\n")
+	assert "destination: ${{ steps.release.outputs.destination }}" in validation
+	assert "RELEASE_REF: ${{ github.ref }}" in validation
+	assert "RELEASE_EVENT: ${{ github.event_name }}" in validation
+	assert "RELEASE_DESTINATION: ${{ inputs.destination }}" in validation
+	assert 'python3 tests/check_release.py "$RELEASE_REF"' in validation
+	assert '--event "$RELEASE_EVENT" --destination "$RELEASE_DESTINATION" >> "$GITHUB_OUTPUT"' in validation
+	assert "id-token:" not in validation
+	assert "permissions: {}" in validation
+	assert "needs: validate-build" in publish
+	assert "inputs.destination" not in publish
+	assert (
+		"if: needs.validate-build.outputs.destination == 'pypi' || "
+		"needs.validate-build.outputs.destination == 'test-pypi'\n"
+	) in publish
+	assert "name: ${{ needs.validate-build.outputs.destination }}" in publish
+	for field, production, test_index in (
+		("url", "https://pypi.org/p/coaxi", "https://test.pypi.org/p/coaxi"),
+		("repository-url", "https://upload.pypi.org/legacy/", "https://test.pypi.org/legacy/"),
+	):
+		assert (
+			f"{field}: ${{{{ needs.validate-build.outputs.destination == 'pypi' && "
+			f"'{production}' || '{test_index}' }}}}\n"
+		) in publish
+	assert "      id-token: write\n" in publish
+	assert "skip-existing: false" in publish
 
 
 def test_distribution_pair(tmp_path: Path) -> None:

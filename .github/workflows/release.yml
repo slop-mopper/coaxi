@@ -3,13 +3,16 @@
 # This file was created by an AI model: openai/gpt-6.1-sol
 
 name: Publish Python package
-run-name: Publish ${{ github.ref_name }} to ${{ inputs.destination }}
+run-name: Publish ${{ github.ref_name }} to ${{ github.event_name == 'push' && 'pypi' || inputs.destination }}
 
 on:
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
       destination:
-        description: Package index (use test-pypi for the rehearsal)
+        description: Package index
         required: true
         type: choice
         default: test-pypi
@@ -20,7 +23,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: release-${{ inputs.destination }}
+  group: release-${{ github.ref }}-${{ github.event_name == 'push' && 'pypi' || inputs.destination }}
   cancel-in-progress: false
 
 defaults:
@@ -36,6 +39,7 @@ jobs:
       contents: read
     outputs:
       artifact-id: ${{ steps.distributions.outputs.artifact-id }}
+      destination: ${{ steps.release.outputs.destination }}
     steps:
       - name: Check out the triggering commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -43,16 +47,15 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
-      - name: Require a matching version tag and known destination
+      - name: Require a matching version tag and resolve the destination
+        id: release
         env:
           RELEASE_REF: ${{ github.ref }}
+          RELEASE_EVENT: ${{ github.event_name }}
           RELEASE_DESTINATION: ${{ inputs.destination }}
         run: |
-          case "$RELEASE_DESTINATION" in
-            test-pypi|pypi) ;;
-            *) echo "Unknown publishing destination" >&2; exit 1 ;;
-          esac
-          python3 tests/check_release.py "$RELEASE_REF"
+          python3 tests/check_release.py "$RELEASE_REF" \
+            --event "$RELEASE_EVENT" --destination "$RELEASE_DESTINATION" >> "$GITHUB_OUTPUT"
 
       - name: Set up uv and Python
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
@@ -113,12 +116,12 @@ jobs:
   publish:
     name: Publish validated distributions
     needs: validate-build
-    if: inputs.destination == 'pypi' || inputs.destination == 'test-pypi'
+    if: needs.validate-build.outputs.destination == 'pypi' || needs.validate-build.outputs.destination == 'test-pypi'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment:
-      name: ${{ inputs.destination }}
-      url: ${{ inputs.destination == 'pypi' && 'https://pypi.org/p/coaxi' || 'https://test.pypi.org/p/coaxi' }}
+      name: ${{ needs.validate-build.outputs.destination }}
+      url: ${{ needs.validate-build.outputs.destination == 'pypi' && 'https://pypi.org/p/coaxi' || 'https://test.pypi.org/p/coaxi' }}
     permissions:
       id-token: write
     steps:
@@ -133,7 +136,7 @@ jobs:
       - name: Publish with Trusted Publishing
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
-          repository-url: ${{ inputs.destination == 'pypi' && 'https://upload.pypi.org/legacy/' || 'https://test.pypi.org/legacy/' }}
+          repository-url: ${{ needs.validate-build.outputs.destination == 'pypi' && 'https://upload.pypi.org/legacy/' || 'https://test.pypi.org/legacy/' }}
           packages-dir: dist/
           verify-metadata: true
           attestations: true
