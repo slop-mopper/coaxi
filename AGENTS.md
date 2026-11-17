@@ -124,6 +124,10 @@ messages at higher log levels.
 
 ## Public APIs and documentation
 
+- Keep all documentation up to date with code changes, including docstrings,
+  code comments, user guides, and the API reference. Update affected
+  documentation in the same change as the code, and check signatures,
+  examples, and descriptions against the implemented behaviour.
 - Give every public function, method, class, and type a succinct, useful
   docstring or equivalent documentation.
 - Give all public function and method parameters and return values type
