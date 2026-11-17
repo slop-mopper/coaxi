@@ -1,8 +1,8 @@
 # Signal binding
 
 {py:class}`coaxi.AxiStreamBus` associates protocol roles with HDL handles.
-No HDL naming convention is required. Names can be unrelated, have different
-case, or contain punctuation supported by cocotb.
+Each role accepts an independent name or handle. Names can have different
+case or contain punctuation supported by cocotb.
 
 ## Naming defaults and overrides
 
@@ -32,11 +32,10 @@ bus = AxiStreamBus.bind(
 )
 ```
 
-The other roles still use their defaults. Explicit names receive no added
-prefix or suffix and no case changes. A name is looked up as a child of the
-binding entity, without using Python attribute syntax.
+The other roles still use their defaults. Explicit names are looked up
+unchanged as children of the binding entity.
 
-Fully explicit handles need no entity:
+Handles can be supplied directly:
 
 ```python
 bus = AxiStreamBus.bind(
@@ -48,48 +47,47 @@ bus = AxiStreamBus.bind(
 source = AxiStreamSource(bus, clock=dut.beat_clock)
 ```
 
-Direct construction with handles is also supported. Use clock and reset
+Direct construction with handles is also supported. Use `clock` and `reset`
 handles with a directly constructed bus; name lookup normally uses the entity
 supplied to `bind()`.
 
 ## Optional signals
 
-Only data, valid, and ready have generated defaults enabled initially.
-Last, keep, strb, user, id, and dest must be selected explicitly. The presence
-of a matching HDL name does not enable a sideband.
+`data`, `valid`, and `ready` have generated defaults enabled initially.
+Select `last`, `keep`, `strb`, `user`, `id`, and `dest` explicitly:
 
 ```python
 bus = AxiStreamBus.bind(dut, prefix="s", last=True, keep=True, user="tags")
 ```
 
-Data and ready can each be omitted:
+`data` and `ready` can each be omitted:
 
 ```python
 bus = AxiStreamBus.bind(dut, valid="tick", data=False, ready=False)
 ```
 
-A data-less source sends `None`. With no ready signal, every rising edge
-with valid asserted accepts a transfer, and the sink captures continuously
-after initialisation. See [Streams without ready](transfers.md#streams-without-ready).
+A data-less source sends `None`. Without `ready`, every rising edge
+with `valid` asserted accepts a transfer, and the sink captures continuously
+after initialisation. See [Streams without `ready`](transfers.md#streams-without-ready).
 
-`None` in `bind()` requests a generated data or ready name. It does not
-omit that signal. In the direct handle constructor, `None` denotes absence.
+`None` in `bind()` requests a generated `data` or `ready` name.
+In the direct handle constructor, `None` denotes absence.
 
 ## Handle constraints
 
-Valid, ready, last, clock, and reset use scalar logic or a one-bit logic
-vector. One-bit vectors can have non-zero HDL indices.
-User, id, and dest use scalar logic or any non-empty logic vector.
+`valid`, `ready`, `last`, `clock`, and `reset` use scalar logic or a one-bit
+logic vector. One-bit vectors can have non-zero HDL indices.
+`user`, `id`, and `dest` use scalar logic or any non-empty logic vector.
 
-Keep and strb need a byte-lane layout. With data present, the data handle
+`keep` and `strb` need a byte-lane layout. With `data` present, its handle
 must be a non-empty, byte-aligned logic vector, with one qualifier bit per
-byte. A record has no inferred byte layout, even with a custom adapter.
-Without data, keep defines the lane count from its own width; strb is forbidden.
+byte. This layout is required with custom adapters too.
+Without `data`, `keep` defines the lane count from its own width; `strb` is forbidden.
 
-Stream roles, clock, and reset must not overlap. Bus construction rejects
-roles with the same HDL path. Clock resolution checks clock aliases; endpoint
-construction checks reset aliases and mutability. These checks cannot detect
-every overlap between a container and one of its fields, or a vector and one
-of its bits. The caller must avoid those overlaps.
+Use separate signals for each stream role, `clock`, and `reset`.
+Bus construction rejects roles with the same HDL path. Clock resolution checks
+`clock` aliases; endpoint construction checks `reset` aliases and mutability.
+The caller must also check for overlaps between a container and its fields,
+or a vector and its bits.
 
 See {py:meth}`coaxi.AxiStreamBus.bind` for the selector types and defaults.

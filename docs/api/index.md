@@ -2,7 +2,7 @@
 
 Import the public API from `coaxi`. Generic `T` denotes an application payload
 type. Default endpoints use `PayloadValue | None`; a custom `Payload[T]`
-adapter selects the application type without adding `None`.
+adapter selects `T`.
 
 ```{py:module} coaxi
 ```
@@ -33,7 +33,7 @@ transfer-reset
 
 Conversion and argument checks can also raise `TypeError`, `ValueError`, or
 `OverflowError`. Custom adapter failures propagate through the calling operation.
-No-ready overflow raises `OverflowError`. See [Lifecycle and recovery](../lifecycle.md)
+Overflow without `ready` raises `OverflowError`. See [Lifecycle and recovery](../lifecycle.md)
 for when explicit initialisation is required.
 
 Cocotb types in signatures are defined in

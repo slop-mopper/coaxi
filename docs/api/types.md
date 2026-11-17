@@ -10,7 +10,7 @@
 ```
 
 An HDL child name or an already-bound cocotb handle. Names are looked up
-unchanged and are not restricted to Python identifiers.
+unchanged, including punctuation supported by cocotb.
 
 ## PayloadValue
 
@@ -20,8 +20,7 @@ unchanged and are not restricted to Python identifiers.
 
 Default-adapter input type. Integers are unsigned, and mappings describe
 complete named-container fields. Reads produce logic snapshots or nested
-dictionaries, without integer conversion. `None` is separate from this alias
-and is used only on data-less buses.
+dictionaries. Data-less buses use `None`, which is separate from this alias.
 
 ## SidebandValue
 
@@ -36,10 +35,12 @@ Deliberate meta-values are supported.
 
 ```{py:function} to_unsigned(value: LogicArray) -> int
 
-:param value: Vector snapshot to interpret as unsigned.
-:type value: LogicArray
+:Parameters:
+  - `value: LogicArray`
+
+    Vector snapshot to interpret as unsigned.
+
 :returns: The unsigned integer value.
-:rtype: int
 :raises ValueError: Any bit is unresolved, including `X`, `U`, or `Z`.
 ```
 
@@ -47,12 +48,14 @@ Deliberate meta-values are supported.
 
 ```{py:function} to_signed(value: LogicArray) -> int
 
-:param value: Vector snapshot to interpret as two's complement.
-:type value: LogicArray
+:Parameters:
+  - `value: LogicArray`
+
+    Vector snapshot to interpret as two's complement.
+
 :returns: The signed integer value.
-:rtype: int
 :raises ValueError: Any bit is unresolved, including `X`, `U`, or `Z`.
 ```
 
 Both helpers allow weak `L` and `H` and reject unresolved values independently
-of `COCOTB_RESOLVE_X`. They do not drive signals or advance simulation time.
+of `COCOTB_RESOLVE_X`.

@@ -5,16 +5,18 @@
 
 ```{py:exception} ProtocolValueError(*args: object) -> None
 
-:param args: Exception arguments, normally a diagnostic message.
-:type args: object
-:returns: None.
-:rtype: None
+:Parameters:
+  - `args: object`
+
+    Exception arguments, normally a diagnostic message.
+
+:returns: `None`.
 ```
 
-Subclass of `ValueError`. Reports invalid sampled valid/ready, accepted last,
-monitored reset, literal reserved keep/strb pairs, or non-binary packet assembly
-identifiers. Weak `L` and `H` fail control and identifier checks.
+Subclass of `ValueError`. Reports invalid sampled `valid` or `ready`, accepted
+`last`, monitored reset, literal reserved `keep`/`strb` pairs, or non-binary
+packet assembly identifiers. Weak `L` and `H` fail control and identifier checks.
 
-An in-progress protocol error requires explicit initialisation. A pin cycle
-does not acknowledge a recorded fault. Payload meta-values alone do not raise
-this error; numeric conversion is separate.
+An in-progress protocol error requires explicit `initialise()`. The first
+recorded fault continues to be reported across pin cycles until local recovery.
+Payloads support meta-values; numeric conversion is explicit.

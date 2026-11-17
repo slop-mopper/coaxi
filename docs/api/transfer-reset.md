@@ -5,15 +5,17 @@
 
 ```{py:exception} TransferReset(*args: object) -> None
 
-:param args: Exception arguments, normally a diagnostic message.
-:type args: object
-:returns: None.
-:rtype: None
+:Parameters:
+  - `args: object`
+
+    Exception arguments, normally a diagnostic message.
+
+:returns: `None`.
 ```
 
-Subclass of `RuntimeError`. Pin assertion, explicit initialisation, or close
+Subclass of `RuntimeError`. Pin assertion, explicit `initialise()`, or `close()`
 invalidated pending work. Traffic may already have been accepted before
-interruption. No acceptance is undone and no retry is performed.
+interruption. Check what the peer accepted before retrying.
 
 Catch expected interruption inside spawned operation coroutines; cocotb can
 fail on an unobserved exception before a later await observes it.

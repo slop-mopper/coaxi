@@ -131,13 +131,16 @@ messages at higher log levels.
 - Choose self-describing parameter names. Document every parameter in a
   structured Parameters section, with its type and meaning. Include defaults,
   units, allowed values, and constraints where relevant.
-- Document the return type and value in a structured Returns section, including
-  `None` where applicable. Keep parameter and return-value descriptions in these
-  sections; do not put them in general prose or repeat them there.
+- List parameters as monospace `name: Type` bullets, with the description in a
+  paragraph below the name within the same bullet.
+- Use one Returns section, including `None` where applicable. Show the return
+  type in the signature; omit a separate Return type row. Keep parameter and
+  return-value descriptions in these sections, without repeating them in prose.
 - Document behaviour that callers need to understand, especially reset,
   handshake timing, framing, payload conversion, and meta-value handling.
 - Display typed signatures for documented functions, constructors, and methods.
   Generated reference pages must show parameter and return annotations.
+  Split long signatures with each parameter on its own line.
 - Give each documented class its own page.
 - Use prose to explain general behaviour, caveats, and recommendations. Include
   example code when it helps the reader use the API.
@@ -177,6 +180,11 @@ messages at higher log levels.
   with a specific, supported statement.
 - Do not dismiss steps with “simply”, “just”, or “obviously”. State what the
   reader must do. Do not praise the API or congratulate the reader.
+- Format API identifiers and signal roles, such as `keep`, `strb`, and `last`,
+  as inline code in prose and tables.
+- Describe what an API does. Remove routine lists of things it does not do,
+  and express caveats as concrete behaviour or caller responsibilities.
+  Keep negative statements when needed for safety or a supported limitation.
 - Use em dashes sparingly, with a space on each side — as here.
 
 ## Source headers and licence

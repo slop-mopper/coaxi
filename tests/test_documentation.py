@@ -7,6 +7,10 @@
 import ast
 import inspect
 import re
+import subprocess
+import sys
+from collections import Counter
+from html import unescape
 from pathlib import Path
 from runpy import run_path
 from types import UnionType
@@ -16,6 +20,7 @@ from typing import Any, Self, TypeAliasType, get_args, get_origin
 from collections.abc import Iterator, Mapping, Sequence
 
 import coaxi
+import pytest
 from cocotb.types import Logic, LogicArray
 from cocotb.handle import HierarchyObject, LogicArrayObject, LogicObject, SimHandleBase
 
@@ -98,6 +103,8 @@ def test_reference_matches_public_api() -> None:
 	"""Check export coverage, separate class pages, and typed parameter/return contracts."""
 	config = run_path(str(Path(__file__).resolve().parents[1] / "docs" / "conf.py"))
 	assert "fieldlist" in config["myst_enable_extensions"], "parameter fields must render as structured lists"
+	assert config["python_maximum_signature_line_length"] == 88
+	assert config["python_trailing_comma_in_multi_line_signatures"] is True
 	exports: set[str] = set()
 	methods: dict[str, set[str]] = {}
 	class_pages: list[Path] = []
@@ -125,16 +132,15 @@ def test_reference_matches_public_api() -> None:
 		signature_text = declaration[declaration.index("(") :]
 		documented = _documented_signature(signature_text, namespace)
 		parameters = documented.parameters
-		assert set(re.findall(r"^:param (\w+): .+", body, re.MULTILINE)) == set(parameters), name
-		field_types = dict(re.findall(r"^:type (\w+): (.+)$", body, re.MULTILINE))
+		field_types = dict(re.findall(r"^  - `(\w+): (.+)`\n\n    \S", body, re.MULTILINE))
 		assert set(field_types) == set(parameters), name
 		for parameter_name, parameter in parameters.items():
 			assert parameter.annotation is not inspect.Parameter.empty, (name, parameter_name)
 			assert eval(field_types[parameter_name], namespace) == parameter.annotation, (name, parameter_name)
-		result = re.search(r"^:rtype: (.+)$", body, re.MULTILINE)
-		assert result is not None and ":returns: " in body, name
+		assert (":Parameters:" in body) == bool(parameters), name
+		assert ":returns: " in body and ":rtype:" not in body, name
+		assert ":param " not in body and ":type " not in body, name
 		assert documented.return_annotation is not inspect.Signature.empty, name
-		assert eval(result[1], namespace) == documented.return_annotation, name
 		if kind == "exception":
 			assert issubclass(owner, Exception)
 			assert list(parameters) == ["args"]  # BaseException has no inspectable signature.
@@ -162,6 +168,56 @@ def test_reference_matches_public_api() -> None:
 			if not member.startswith("_") and (inspect.isfunction(value) or inspect.ismethod(value))
 		}
 		assert methods.get(name, set()) == public_methods, name
+
+
+def test_rendered_reference_layout(tmp_path: Path) -> None:
+	"""Build with the docs group and check parameter bullets, returns, and multiline signatures."""
+	for module in ("sphinx", "myst_parser", "furo"):
+		pytest.importorskip(module, reason="the rendered layout check needs the docs dependency group")
+	root = Path(__file__).resolve().parents[1]
+	subprocess.run(
+		[
+			sys.executable,
+			"-m",
+			"sphinx",
+			"-M",
+			"html",
+			str(root / "docs"),
+			str(tmp_path),
+			"-E",
+			"-a",
+			"-n",
+			"-W",
+			"--keep-going",
+		],
+		cwd=root,
+		capture_output=True,
+		text=True,
+		check=True,
+		timeout=120,
+	)
+	expected_fields: dict[Path, list[str]] = {}
+	expected_returns: Counter[Path] = Counter()
+	for path, kind, declaration, body in _reference_entries():
+		if kind == "type" or "(" not in declaration:
+			continue
+		expected_fields.setdefault(path, []).extend(re.findall(r"^  - `(.+)`$", body, re.MULTILINE))
+		expected_returns[path] += 1
+	for path, fields in expected_fields.items():
+		html = (tmp_path / "html" / "api" / path.with_suffix(".html").name).read_text(encoding="utf-8")
+		labels = re.findall(r"<li><p><code\b[^>]*>(.*?)</code></p>\s*<p>\S", html, re.DOTALL)
+		rendered_fields = [unescape(re.sub(r"<[^>]+>", "", label)) for label in labels]
+		assert Counter(rendered_fields) == Counter(fields), path
+		assert html.count(">Returns<span") == expected_returns[path], path
+		assert "Return type" not in html, path
+	for name, page in (("AxiStreamBus", "bus"), ("AxiStreamSource", "source"), ("AxiStreamSink", "sink")):
+		html = (tmp_path / "html" / "api" / f"{page}.html").read_text(encoding="utf-8")
+		signature = html.split(f'id="coaxi.{name}">', maxsplit=1)[1].split("</dt>", maxsplit=1)[0]
+		parameters = inspect.signature(getattr(coaxi, name)).parameters.values()
+		line_count = len(parameters) + int(any(p.kind is inspect.Parameter.KEYWORD_ONLY for p in parameters))
+		assert "<dl>" in signature and "</dl>" in signature, name
+		assert signature.count('<dd><em class="sig-param">') == line_count, name
+		assert 'class="sig-return"' in signature, name
 
 
 def test_guide_python_syntax_and_tested_tutorial() -> None:

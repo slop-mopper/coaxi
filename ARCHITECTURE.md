@@ -379,11 +379,16 @@ directives, doctest, and the Furo theme. The `docs` dependency group is separate
 from runtime and development dependencies. Guides cover installation, signal
 binding, payload conversion, transfer timing, framing, sidebands, lifecycle,
 and development. Each public class has its own reference page with typed
-signatures and structured parameter and return fields using MyST's fieldlist
-extension. Type aliases and numeric helpers share a page.
+signatures and structured fields using MyST's fieldlist extension. Parameters
+use monospace `name: Type` bullets with descriptions in separate paragraphs.
+Returns uses one row; the signature supplies its type. Sphinx splits signatures
+longer than 88 characters into one parameter per line.
+Type aliases and numeric helpers share a page.
 The reference is curated independently of source docstrings;
 regressions compare its parameter names, kinds, defaults, and annotations against
-the installed public API, and check export/method coverage. Distribution checks
+the installed public API, and check export/method coverage. With the docs group
+installed, a temporary strict HTML build checks parameter bullets, description
+paragraphs, the single Returns row, and multiline signatures. Distribution checks
 verify that all documentation sources are included in the sdist and generated
 HTML and doctrees are excluded.
 

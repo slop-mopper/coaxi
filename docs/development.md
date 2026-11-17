@@ -13,21 +13,19 @@ uv run --locked --group docs sphinx-build -M html docs docs/_build -n -W --keep-
 uv run --locked --group docs sphinx-build -M doctest docs docs/_build -n -W --keep-going
 ```
 
-The HTML entry point is `docs/_build/html/index.html`. Documentation builds
-do not run simulations. The numeric examples can run with Sphinx's doctest
-builder; the runnable tutorial is included from the simulator-tested source.
+The HTML entry point is `docs/_build/html/index.html`.
+Sphinx's doctest builder checks numeric examples; the simulator suite runs
+the tutorial's source.
 
 The simulator regression uses VHDL-2008 and both values of
 `COCOTB_TRUST_INERTIAL_WRITES`. It includes full-rate spacing, backpressure,
 records, scalar payloads, optional signals, meta-values, reset monitoring,
 and cancellation. The tested baseline is Python 3.13.5, cocotb 2.1.0,
-and NVC 1.21.1 on Linux. This does not establish support for other simulators
-or every permitted dependency version.
+and NVC 1.21.1 on Linux.
 
 `tests/test_distribution.py` builds an sdist and a wheel from it, checks their
 contents, installs only declared runtime dependencies in a fresh environment,
 and runs the packaged vector/record example under NVC in both write modes.
-No package publication is performed.
 
 ## Reliability and coverage
 
@@ -45,12 +43,11 @@ ordering, stalled signals, and repeated recovery.
 The extended reliability run defaults to seeds `0..7` and 120 lifecycle rounds
 in each mode. Failures include the seed and recent traffic history.
 Mutation checks use temporary faulty copies, leaving the working library
-unchanged. A successful run writes `reliability-results.json`. These checks
-sample assertion strength; they cannot prove the absence of defects.
+unchanged. A successful run writes `reliability-results.json`.
 Do not disable assertions with `-O` or `PYTHONOPTIMIZE`.
 
 Coverage combines Python and cocotb branch data into `coverage.json` and
-`htmlcov/`. It has no percentage gate.
+`htmlcov/` for review.
 
 ## Releases and hosting
 
@@ -60,8 +57,8 @@ checks, and any GitHub environment approvals. Manual runs support both indices.
 Do not move a published tag or attempt to replace uploaded release files.
 
 The documentation workflow builds pull requests targeting `master` and deploys
-only `master` to GitHub Pages. There is one current site, with no versioned
-manuals or pull-request deployments. Publishing requires Pages to use GitHub
+only `master` to GitHub Pages. The site follows the current development branch.
+Publishing requires Pages to use GitHub
 Actions as its source.
 
 `ARCHITECTURE.md` describes the implementation, and `AGENTS.md` records

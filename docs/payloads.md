@@ -1,9 +1,9 @@
 # Payloads and conversion
 
 The default adapter, {py:class}`coaxi.HandlePayload`, supports scalar logic,
-logic vectors, and named containers such as VHDL records. It does not flatten
-records or convert received values to integers. Handshake and framing logic
-do not depend on the payload representation.
+logic vectors, and named containers such as VHDL records. Received values
+use cocotb logic types and field mappings. Adapters provide payload access;
+endpoints handle handshakes and framing.
 
 ## Vectors and records
 
@@ -17,8 +17,8 @@ await source.send(42)  # Unframed, data-bearing bus.
 await source.send(LogicArray.from_signed(-12, 16))
 ```
 
-Record values use mappings with the HDL field names. Every field must be
-present, with no additional keys. Nested records use nested mappings.
+Record values use mappings whose keys match all HDL field names.
+Nested records use nested mappings.
 For this VHDL record:
 
 ```{literalinclude} ../tests/hdl/stream_dut.vhd
@@ -44,16 +44,16 @@ payload before writing any leaf. Integer inputs must be unsigned and fit the
 HDL width; unsupported leaf types fail when the adapter is constructed.
 Errors from leaf conversion include the HDL path.
 
-Do not mutate payload values or contained logic arrays while a send is active.
-The source does not copy a complete frame before sending it.
+Keep payload values and contained logic arrays unchanged while a send is active.
+The source reads each frame entry as it sends it.
 
 ## Meta-values
 
 Payloads and raw sidebands can contain HDL meta-values for propagation and
-fault-injection tests. Reading them does not silently resolve `X`, `U`, or `Z`.
+fault-injection tests. Snapshots include `X`, `U`, and `Z` as logic values.
 With the default adapter, source initialisation and reset assertion clear
 owned payload leaves to zero. Custom adapters define their own recovery
-values through `clear()`. Sink initialisation does not clear incoming data.
+values through `clear()`. The sink owns only `ready`.
 
 Numeric conversion is explicit:
 
@@ -73,15 +73,15 @@ ValueError: cannot convert unresolved payload 00X1 to an integer
 
 The numeric helpers reject unresolved values even when `COCOTB_RESOLVE_X`
 would allow cocotb to resolve them. Weak `L` and `H` are resolvable for numeric
-conversion. Sampled handshake controls, accepted last, and monitored reset
-instead require literal `0` or `1`; weak values also fail there.
+conversion. Sampled handshake controls, accepted `last`, and monitored reset
+require literal `0` or `1`; weak values also fail there.
 
 ## Application-defined types
 
 Implement {py:class}`coaxi.Payload` to use an application value type. The
 adapter binds its own handles and provides synchronous `drive()`, `read()`,
-and `clear()` methods. They must not yield. Reads must produce independent
-snapshots, and clearing must define every owned payload leaf.
+and `clear()` methods. Each method must complete synchronously. Reads must
+produce independent snapshots, and clearing must define every owned payload leaf.
 
 Supply the adapter through the endpoint constructor. With `Payload[T]`,
 the source accepts `T` and the sink produces `AxiStreamTransfer[T]`.
@@ -89,9 +89,9 @@ Without an adapter, endpoint typing is `PayloadValue | None`; `None` is only
 accepted on a data-less bus. A data-less bus rejects custom adapters.
 
 Validate before writing where possible. A custom adapter can partially
-write before raising; local recovery cannot undo those writes or accepted
-traffic. The sink calls only `read()`, never `clear()` or `drive()`, because
-it does not own the incoming payload.
+write before raising; coordinate recovery with the peer.
+The sink accesses incoming payloads through `read()`.
 
-Custom payloads do not relax the keep/strb layout requirements. Last, user,
-id, and dest remain independent of payload shape.
+With `data` present, `keep` and `strb` require a byte-aligned logic-vector handle.
+See [Byte lanes](sidebands.md#byte-lanes) for the lane layout and data-less buses.
+`last`, `user`, `id`, and `dest` support any payload shape.

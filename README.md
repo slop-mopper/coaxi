@@ -28,18 +28,17 @@ uv run pytest -q tests/test_simulation.py -k example
 ## Scope
 
 Sources and sinks support individual transfers and frames, optional AXI4-Stream
-sidebands, data/ready omissions, interleaved packet assembly, and monitored
+sidebands, optional `data` and `ready`, interleaved packet assembly, and monitored
 reset pins with configurable polarity. Signal names can be unrelated; each
 role accepts a name or a cocotb handle. Payload access is separate from handshake
 and framing logic.
 
 AXI4 memory-mapped, AXI4-Lite, and AXI5-Stream extensions are not implemented.
-Tests cover Python 3.13.5, cocotb 2.1.0, and NVC 1.21.1 on Linux; they do not
-establish compatibility with other simulator timing models.
+Tests cover Python 3.13.5, cocotb 2.1.0, and NVC 1.21.1 on Linux.
 
-Construction does not drive signals. Await `initialise()` before traffic and
-for explicit recovery from faults or caller cancellation. It never drives a
-DUT reset pin. Healthy pin-only resets recover automatically after release.
+Await `initialise()` before traffic and for explicit recovery from faults or
+caller cancellation. DUT reset is caller-controlled. Healthy pin-only resets
+recover automatically after release.
 Clocks must contain literal `0` and `1` from before the first initialisation
 onwards; endpoints do not monitor this precondition. See
 [Lifecycle and recovery](https://slop-mopper.github.io/coaxi/lifecycle.html)

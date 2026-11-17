@@ -27,8 +27,8 @@ uv add /absolute/path/to/coaxi
 ## Connecting to a DUT
 
 A source drives the DUT's input stream; a sink receives its output stream.
-Bind each end separately. Do not attach a coaxi source to DUT-driven data,
-valid, or sidebands, or a coaxi sink to DUT-driven ready.
+Bind each end separately. The testbench must own the signals its endpoints
+drive: `data`, `valid`, and sidebands for a source, and `ready` for a sink.
 
 ```python
 from coaxi import AxiStreamBus, AxiStreamSink, AxiStreamSource
@@ -47,9 +47,8 @@ The clock must already be running. Only start a cocotb clock if the testbench
 owns that signal. The clock must contain literal `0` and `1` values from
 before the first initialisation onwards; clock values are not monitored.
 
-Construction does not drive signals. `initialise()` clears local state and
-owned outputs; it never drives the DUT's reset pin. Reset the DUT separately
-when its state needs clearing.
+`initialise()` starts driving, clearing local state and owned outputs.
+Reset the DUT separately when its state needs clearing.
 
 Start sending and receiving concurrently when the DUT can apply backpressure:
 
@@ -66,8 +65,8 @@ assert [to_unsigned(beat.data) for beat in frame] == [10, 20, 30]
 The assertion assumes vector payloads. In a complete test, use a bounded
 simulation-time timeout, for example
 `@cocotb.test(timeout_time=2000, timeout_unit="ns")`. An unterminated frame or
-stalled peer can otherwise wait indefinitely. A frame-length limit is not a
-timeout.
+stalled peer can otherwise wait indefinitely, including when a frame-length
+limit is set.
 
 ## Runnable loopback
 
@@ -79,17 +78,15 @@ Run it in the checkout:
 uv run pytest -q tests/test_simulation.py -k example
 ```
 
-The runner builds `tests/hdl/stream_dut.vhd` as VHDL-2008 and runs the test
-in both cocotb inertial-write modes. The complete cocotb test is included
-directly from its tested source:
+The runner builds `tests/hdl/stream_dut.vhd` as VHDL-2008 and runs this test
+in both cocotb inertial-write modes:
 
 ```{literalinclude} ../examples/stream_loopback.py
 :language: python
 :lines: 8-
 ```
 
-These loopbacks use otherwise undriven buses in the fixture. Source and sink
-share each bus to exercise the API without a DUT datapath between them.
+These loopbacks connect source and sink directly on buses in the fixture.
 For a real DUT, use separate input and output bindings as above.
 
 After traffic has finished, `await source.close()` and `await sink.close()`
