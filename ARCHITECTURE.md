@@ -373,3 +373,29 @@ Pytest, Pyrefly and Ruff are development dependencies. Pyrefly uses its defaults
 Ruff uses a 120-character line length, tab indentation, double quotes and
 docstring code formatting. The lint configuration ignores `I001` and `BLE001`;
 no additional lint rules are selected.
+
+## Release automation
+
+`.github/workflows/release.yml` is a manually dispatched, version-tag-only
+workflow. Its destination choice defaults to `test-pypi`; production uses `pypi`.
+These exact GitHub environment names form part of the Trusted Publisher identity.
+`tests/check_release.py` requires the full ref to match the static project version
+and checks the locked project version. It also rejects missing, extra or linked
+distribution files; uv's `.gitignore` marker is permitted but never uploaded.
+
+The read-only validation/build job pins Ubuntu 24.04, uv, Python 3.13.5 and an
+official SHA-256-checked NVC 1.21.1 Ubuntu package. It installs locked development
+dependencies, runs Pyrefly, Ruff and all Python/NVC tests, then builds the release
+pair with `uv build --no-sources` in a fresh directory. The build-free CLI in
+`tests/test_distribution.py` applies the same archive, isolated-installation and
+packaged-example checks as the normal distribution regression to that exact pair.
+Only those validated distributions are uploaded as a run-scoped artefact.
+
+The separate publish job alone has `id-token: write`. It downloads the build job's
+artefact by ID from the same run, without checking out or executing project code.
+A commit-pinned PyPA action verifies metadata, generates provenance attestations
+and uploads with OIDC Trusted Publishing. Duplicate uploads fail visibly.
+GitHub environment approval/tag restrictions and the PyPI/TestPyPI publishers
+require external configuration. `RELEASING.md` documents this configuration,
+manual dispatch and recovery limitations. Separate destination runs rebuild;
+this does not implement cross-index byte-for-byte artefact promotion.

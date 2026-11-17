@@ -23,7 +23,7 @@ uv sync --locked
 uv build
 
 # In a separate Python 3.13+ testbench project managed by uv:
-uv add /absolute/path/to/coaxi/dist/coaxi-0.1.0-py3-none-any.whl
+uv add /absolute/path/to/coaxi/dist/coaxi-1.0.0-py3-none-any.whl
 ```
 
 Run testbench tools through that project's `uv run`. To use the source checkout
@@ -35,6 +35,12 @@ models are not covered by these results.
 
 The examples, test fixture and architecture links below refer to files in the
 source checkout or unpacked source distribution.
+
+## Releases
+
+Maintainers can publish manually from matching version tags using GitHub Actions
+and PyPI Trusted Publishing. See [RELEASING.md](RELEASING.md) for the
+`test-pypi` rehearsal, production approval and first-release steps.
 
 ## Signal names
 

@@ -5,13 +5,17 @@
 """Build and inspect distributions, then exercise the installed wheel without checkout imports."""
 
 import sys
+import argparse
 import tarfile
 import tomllib
 import zipfile
 import subprocess
 from pathlib import Path
 from email.parser import Parser
+from tempfile import TemporaryDirectory
 from xml.etree import ElementTree
+
+from tests.check_release import distribution_paths
 
 
 def test_distribution(tmp_path: Path) -> None:
@@ -19,14 +23,23 @@ def test_distribution(tmp_path: Path) -> None:
 	root = Path(__file__).resolve().parents[1]
 	dist = tmp_path / "dist"
 	# uv's default builds the wheel from the sdist, rather than the live checkout.
-	subprocess.run(["uv", "build", "--out-dir", str(dist)], cwd=root, check=True, timeout=120)
+	subprocess.run(["uv", "build", "--no-sources", "--out-dir", str(dist)], cwd=root, check=True, timeout=120)
+	check_distribution(dist, tmp_path)
+
+
+def check_distribution(dist: Path, tmp_path: Path) -> None:
+	"""Inspect the already-built dist pair and exercise its installed wheel using tmp_path for scratch."""
+	if not __debug__:
+		raise RuntimeError("Distribution validation requires Python assertions; do not use -O or PYTHONOPTIMIZE")
+	root = Path(__file__).resolve().parents[1]
 	metadata = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
 	version = metadata["project"]["version"]
 	licence = (root / "LICENSE.txt").read_bytes()
 	package_files = {"__init__.py", "_binding.py", "_payload.py", "_sideband.py", "_stream.py", "py.typed"}
-	wheel_path = dist / f"coaxi-{version}-py3-none-any.whl"
+	wheel_path, source_path = distribution_paths(dist, version)
 	with zipfile.ZipFile(wheel_path) as wheel:
 		files = set(wheel.namelist())
+		assert len(files) == len(wheel.namelist()), "duplicate wheel archive members"
 		dist_info = f"coaxi-{version}.dist-info"
 		wheel_metadata = Parser().parsestr(wheel.read(f"{dist_info}/METADATA").decode("utf-8"))
 		assert wheel_metadata["Name"] == "coaxi"
@@ -44,9 +57,20 @@ def test_distribution(tmp_path: Path) -> None:
 		for name in package_files:
 			assert wheel.read(f"coaxi/{name}") == (root / "src" / "coaxi" / name).read_bytes()
 		assert wheel.read("coaxi/py.typed") == b""
-	with tarfile.open(dist / f"coaxi-{version}.tar.gz") as source:
+	with tarfile.open(source_path) as source:
 		prefix = f"coaxi-{version}"
 		source_files = set(source.getnames())
+		assert len(source_files) == len(source.getnames()), "duplicate sdist archive members"
+		member = source.extractfile(f"{prefix}/PKG-INFO")
+		assert member is not None
+		with member:
+			source_metadata = Parser().parsestr(member.read().decode("utf-8"))
+		for header in ("Name", "Version", "Requires-Python", "License-Expression", "License-File", "Requires-Dist"):
+			assert source_metadata.get_all(header) == wheel_metadata.get_all(header), header
+		member = source.extractfile(f"{prefix}/pyproject.toml")
+		assert member is not None
+		with member:
+			assert member.read() == (root / "pyproject.toml").read_bytes()
 		for path in [
 			"pyproject.toml",
 			"README.md",
@@ -54,6 +78,10 @@ def test_distribution(tmp_path: Path) -> None:
 			"AGENTS.md",
 			"uv.lock",
 			"tests/test_distribution.py",
+			"tests/check_release.py",
+			"tests/__init__.py",
+			"tests/test_release.py",
+			"RELEASING.md",
 			"tests/test_simulation.py",
 			"tests/test_typing.py",
 			"tests/test_values.py",
@@ -125,6 +153,7 @@ consumer = Path(sys.argv[1]).resolve()
 assert Path(sys.prefix).resolve() == consumer
 assert Path(coaxi.__file__).is_relative_to(consumer), coaxi.__file__
 assert Path(distribution("coaxi").locate_file("")).resolve().is_relative_to(consumer)
+assert distribution("coaxi").version == sys.argv[2]
 for development_package in ("pyrefly", "ruff", "coverage"):
 	try:
 		distribution(development_package)
@@ -161,7 +190,7 @@ assert inspect.signature(coaxi.AxiStreamSink).parameters["buffer_capacity"].defa
 assert inspect.signature(coaxi.AxiStreamSink.recv_frame).parameters["max_transfers"].default is None
 """
 	subprocess.run(
-		[str(python), "-I", "-c", smoke, str(consumer)],
+		[str(python), "-I", "-c", smoke, str(consumer), version],
 		cwd=tmp_path,
 		check=True,
 		timeout=30,
@@ -215,3 +244,13 @@ for mode in ("0", "1"):
 		assert results[0].get("name") == "stream_loopback"
 		for status in ("failure", "error", "skipped"):
 			assert results[0].find(status) is None, ElementTree.tostring(results[0], encoding="unicode")
+
+
+if __name__ == "__main__":
+	parser = argparse.ArgumentParser(description="Validate already-built release files without rebuilding them.")
+	parser.add_argument(
+		"--dist", required=True, type=Path, help="Directory containing the exact release sdist and wheel"
+	)
+	arguments = parser.parse_args()
+	with TemporaryDirectory(prefix="coaxi-release-") as scratch:
+		check_distribution(arguments.dist.resolve(), Path(scratch))
