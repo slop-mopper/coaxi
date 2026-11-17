@@ -390,7 +390,10 @@ the `github-pages` environment. Only deployment receives `pages: write` and
 current site, without release-version directories or pull-request deployments.
 GitHub Pages must be enabled with GitHub Actions as its publishing source.
 Documentation builds need Python and the package dependencies, with no NVC or
-simulation runs.
+simulation runs. The Pages deployment action and the upload action's nested
+artefact uploader declare Node.js 24. Both workflows retain full commit-SHA
+action pins with release-version comments; offline regression tests check the
+audited pin inventory alongside the existing deployment and release guards.
 
 ## Release automation
 

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: CC0-1.0
 # This file was created by an AI model: openai/gpt-6.1-sol
 
-"""Regression tests for build-free release guards; no package-index access or uploads."""
+"""Check build-free release guards and workflow action pins without package-index access or uploads."""
 
 import sys
 import tomllib
@@ -185,6 +185,41 @@ def test_workflow_release_wiring() -> None:
 		) in publish
 	assert "      id-token: write\n" in publish
 	assert "skip-existing: false" in publish
+
+
+@pytest.mark.parametrize("workflow_name", ["docs.yml", "release.yml"])
+def test_workflow_action_pins(workflow_name: str) -> None:
+	"""Action SHAs and version comments match the manually audited stable releases, without network access."""
+	pins = {
+		"actions/checkout": ("3d3c42e5aac5ba805825da76410c181273ba90b1", "v7.0.1"),
+		"astral-sh/setup-uv": ("68559e99cc807c1eb7e9238fd43a15bba460eec2", "v10.3.3"),
+		"actions/upload-artifact": ("cf430e030ddbb5b0abf93d22962f4752f3646cd9", "v7.0.2"),
+		"actions/download-artifact": ("9000827ccba6bdab643e8b6fd33ac0654aef8333", "v8.0.2"),
+		"pypa/gh-action-pypi-publish": ("7245906fb61fa33a13554f9d5fb856fe61758086", "v1.14.3"),
+		"actions/upload-pages-artifact": ("fc324d3547104276b827a68afc52ff2a11cc49c9", "v5.0.0"),
+		"actions/deploy-pages": ("368f82528645a54fb793d4d04e342629a3f51346", "v5.0.1"),
+	}
+	expected_actions = {
+		"docs.yml": {"actions/checkout", "astral-sh/setup-uv", "actions/upload-pages-artifact", "actions/deploy-pages"},
+		"release.yml": {
+			"actions/checkout",
+			"astral-sh/setup-uv",
+			"actions/upload-artifact",
+			"actions/download-artifact",
+			"pypa/gh-action-pypi-publish",
+		},
+	}
+	root = Path(__file__).resolve().parents[1]
+	workflow = (root / ".github/workflows" / workflow_name).read_text(encoding="utf-8")
+	seen: set[str] = set()
+	for line in workflow.splitlines():
+		if not line.strip().startswith("uses: "):
+			continue
+		reference, _, version = line.strip().removeprefix("uses: ").partition(" # ")
+		action, sha = reference.split("@")
+		assert (sha, version) == pins[action], f"{workflow_name}: {action}"
+		seen.add(action)
+	assert seen == expected_actions[workflow_name]
 
 
 def test_distribution_pair(tmp_path: Path) -> None:

@@ -26,7 +26,7 @@ def test_pages_workflow_permissions() -> None:
 	guard = "if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'"
 	upload = build.split("- name: Upload the Pages site\n", maxsplit=1)[1]
 	assert guard in upload
-	assert "uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b" in upload
+	assert "uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9" in upload
 	assert "\n          name: github-pages\n          path: docs/_build/html\n" in upload
 	assert guard in deploy
 	assert "needs: build" in deploy
@@ -35,5 +35,5 @@ def test_pages_workflow_permissions() -> None:
 	assert "actions/checkout@" not in deploy
 	assert "\n        run:" not in deploy
 	assert deploy.count("uses:") == 1
-	assert "uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e" in deploy
+	assert "uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346" in deploy
 	assert "\n          artifact_name: github-pages\n" in deploy
