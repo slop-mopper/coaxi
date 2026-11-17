@@ -128,27 +128,55 @@ messages at higher log levels.
   docstring or equivalent documentation.
 - Give all public function and method parameters and return values type
   annotations. Annotate public attributes and other exposed types as appropriate.
-- Choose self-describing parameter names. Still explain each parameter's meaning
-  in the function documentation, including units, defaults, or constraints where
-  relevant.
+- Choose self-describing parameter names. Document every parameter in a
+  structured Parameters section, with its type and meaning. Include defaults,
+  units, allowed values, and constraints where relevant.
+- Document the return type and value in a structured Returns section, including
+  `None` where applicable. Keep parameter and return-value descriptions in these
+  sections; do not put them in general prose or repeat them there.
 - Document behaviour that callers need to understand, especially reset,
   handshake timing, framing, payload conversion, and meta-value handling.
-- Documentation uses Sphinx, MyST Markdown and Furo under `docs/`, with tools
+- Display typed signatures for documented functions, constructors, and methods.
+  Generated reference pages must show parameter and return annotations.
+- Give each documented class its own page.
+- Use prose to explain general behaviour, caveats, and recommendations. Include
+  example code when it helps the reader use the API.
+- Use cppreference and docs.rs as reference models for organisation and useful
+  technical detail. Conventional Python documentation is a negative example,
+  not the default style to follow.
+- Documentation uses Sphinx, MyST Markdown, and Furo under `docs/`, with tools
   in the separate `docs` dependency group. Build with
   `uv run --locked --group docs sphinx-build -M html docs docs/_build -n -W --keep-going`.
-- Keep the documentation site as a skeleton until the user supplies their
-  writing requirements. Do not migrate or write guides or API pages yet.
+- Keep the documentation site as a skeleton until the user asks for content.
+  Recording writing requirements does not authorise writing or migrating guides
+  or API pages.
 
 ## Language and style
 
-- Use British English in code, comments, documentation, and user-facing prose:
-  for example, `initialise`, `serialise`, and `colour`.
+- Use simple British English spelling and grammar in code, comments,
+  documentation, and user-facing prose: for example, `initialise`, `serialise`,
+  and `colour`. Use Oxford commas.
 - Preserve spelling required by existing APIs, protocol names, identifiers, and
   external tools.
-- Write simple, direct English. Use technical terms when they have a precise,
-  useful meaning; avoid unnecessary jargon.
-- Avoid stock assistant phrasing, rhetorical contrasts such as “not X but Y”,
-  and inflated claims.
+- Write succinct technical documentation. Use direct statements and technical
+  terms with a useful meaning. Avoid flowery prose and unnecessary jargon.
+- Avoid words such as “retained”, “exact”, “boundary”, and “preserved” in
+  documentation prose; state the concrete behaviour in plain language.
+- Remove filler such as “it is important to note”, “please note that”, “in order
+  to”, and “as mentioned above”.
+- Do not comment on the act of documenting. Omit introductions such as “this
+  section explains”, “in this guide, we will”, and “let's explore”.
+- Use paragraphs for connected explanations. Use lists for actual enumerations
+  and bold text sparingly; do not split ordinary prose into frequent short
+  lists or add a heading for every paragraph.
+- Do not use forced analogies or rhetorical contrasts such as “not X, but Y”
+  and “Y rather than X”. Do not force content into groups of three.
+- Avoid stock assistant phrasing and sales language such as “seamless”,
+  “powerful”, “unlock”, and “leverage”. Replace vague claims such as “robust”
+  with a specific, supported statement.
+- Do not dismiss steps with “simply”, “just”, or “obviously”. State what the
+  reader must do. Do not praise the API or congratulate the reader.
+- Use em dashes sparingly, with a space on each side — as here.
 
 ## Source headers and licence
 
