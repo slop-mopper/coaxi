@@ -446,7 +446,8 @@ and development. Each public class has its own reference page with typed
 signatures and structured fields using MyST's fieldlist extension. Parameters
 use monospace `name: Type` bullets with descriptions in separate paragraphs.
 Returns uses one row; the signature supplies its type. Sphinx splits signatures
-longer than 88 characters into one parameter per line.
+longer than 88 characters into one parameter per line. HTML code blocks use
+four-space tab stops, including examples drawn from source files.
 Type aliases and numeric helpers share a page.
 The reference is curated independently of source docstrings;
 regressions compare its parameter names, kinds, defaults, and annotations against

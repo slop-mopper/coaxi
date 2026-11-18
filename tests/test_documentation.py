@@ -220,7 +220,7 @@ class _ArticleMarkup(HTMLParser):
 
 
 def test_rendered_reference_layout(tmp_path: Path) -> None:
-	"""Check site-wide markup, parameter bullets, returns, and multiline signatures."""
+	"""Check site-wide code styling, field layouts, and multiline signatures."""
 	for module in ("sphinx", "myst_parser", "furo"):
 		pytest.importorskip(module, reason="the rendered layout check needs the docs dependency group")
 	root = Path(__file__).resolve().parents[1]
@@ -245,6 +245,11 @@ def test_rendered_reference_layout(tmp_path: Path) -> None:
 		check=True,
 		timeout=120,
 	)
+	site = tmp_path / "html"
+	index = (site / "index.html").read_text(encoding="utf-8")
+	assert re.search(r'<link\b[^>]*\bhref="_static/code\.css(?:\?[^"]*)?"', index)
+	css = (site / "_static" / "code.css").read_text(encoding="utf-8")
+	assert re.search(r"\bpre\s*\{\s*tab-size:\s*4\s*;", css)
 	expected_fields: dict[Path, list[str]] = {}
 	expected_returns: Counter[Path] = Counter()
 	for path, kind, declaration, body in _reference_entries():

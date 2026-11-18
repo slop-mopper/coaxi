@@ -120,7 +120,8 @@ def check_distribution(dist: Path, tmp_path: Path) -> None:
 		]:
 			assert f"{prefix}/{path}" in source_files
 		# Ship all guide/reference sources, but not generated HTML or doctrees.
-		doc_paths = [root / "docs" / "conf.py", *sorted((root / "docs").rglob("*.md"))]
+		docs = root / "docs"
+		doc_paths = [docs / "conf.py", docs / "_static" / "code.css", *sorted(docs.rglob("*.md"))]
 		for doc_path in doc_paths:
 			relative = doc_path.relative_to(root)
 			if "_build" in relative.parts:
