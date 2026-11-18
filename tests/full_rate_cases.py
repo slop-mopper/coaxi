@@ -218,6 +218,7 @@ async def source_backpressure(dut: HierarchyObject, reset_pin: bool) -> None:
 	bus = _record(dut)
 	source = AxiStreamSource(bus, "beat_clock", reset=dut.reset_lane if reset_pin else None, reset_active_high=True)
 	await source.initialise()
+	await source.wait_available()
 	count = 64
 
 	async def send_all() -> None:
@@ -265,6 +266,7 @@ async def sink_source_gaps(dut: HierarchyObject, reset_pin: bool) -> None:
 	bus = AxiStreamBus.bind(dut, prefix="plain", t_prefix=False)
 	sink = AxiStreamSink(bus, "beat_clock", reset=dut.reset_lane if reset_pin else None, reset_active_high=True)
 	await sink.initialise()
+	await sink.wait_available()
 	count = 96
 
 	async def recv_all() -> None:

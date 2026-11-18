@@ -78,6 +78,7 @@ async def watcher_fault_delivered_to_initialise(dut: HierarchyObject) -> None:
 		assert again.value is failure
 	# The watcher stopped on failure. Restoring the hook and cycling the pin
 	# must not acknowledge the fault; initialise() must restart monitoring.
+	await Timer(1, unit="step")
 	dut.reset_lane.value = 1
 	await Timer(1, unit="ns")
 	dut.reset_lane.value = 0
@@ -87,6 +88,7 @@ async def watcher_fault_delivered_to_initialise(dut: HierarchyObject) -> None:
 		await source.send(1, last=True)
 	assert after.value is failure
 	await source.initialise()
+	await source.wait_available()
 	dut.sb_tready.value = 1
 	await source.send(73, last=True)
 	await source.close()
@@ -238,6 +240,7 @@ async def stale_pin_cycle_cannot_clear_replacement(dut: HierarchyObject) -> None
 	clock = cocotb.start_soon(Clock(dut.beat_clock, 10, unit="ns").start(start_high=False))
 	source = AxiStreamSource(_bus(dut), dut.beat_clock, reset=dut.reset_lane, reset_active_high=True)
 	await source.initialise()
+	await source.wait_available()
 	clock.cancel()
 	old_generation, old_cycle = source._monitor_generation, source._pin_cycle
 	assert old_generation is not None and old_cycle is not None
@@ -258,6 +261,7 @@ async def stale_pin_cycle_cannot_clear_replacement(dut: HierarchyObject) -> None
 	dut.reset_lane.value = 0
 	clock = cocotb.start_soon(Clock(dut.beat_clock, 10, unit="ns").start(start_high=False))
 	await source.initialise()
+	await source.wait_available()
 	sending = cocotb.start_soon(source.send(0xDEAD, last=True, sidebands=AxiStreamSidebands(user=7)))
 	await FallingEdge(dut.beat_clock)
 	await Timer(1, unit="ns")
@@ -311,6 +315,7 @@ async def cancelled_initialise_keeps_deferred_safety_clear(dut: HierarchyObject)
 	with pytest.raises(EndpointStateError):
 		await source.send(1, last=True)
 	await source.initialise()
+	await source.wait_available()
 	dut.sb_tready.value = 1
 	await source.send(2, last=True)
 	await source.close()

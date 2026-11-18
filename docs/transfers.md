@@ -44,7 +44,7 @@ transmission, or {py:meth}`~coaxi.AxiStreamSink.set_pause_generator` to hold
 waiting for `ready` keeps `valid`, `data`, and sidebands stable until acceptance.
 A sink without `ready` cannot stall its peer.
 
-An initialised endpoint reads one pause value in `ReadOnly` after every
+An available endpoint reads one pause value in `ReadOnly` after every
 rising edge, including when idle. This value controls the next falling-edge
 drive. A generator can read settled signals at that point. Leave writes to
 the endpoint.
@@ -124,8 +124,8 @@ calls. Any number of identities can have unfinished packets.
 
 ## Streams without `ready`
 
-A sink without `ready` continuously captures every rising edge with `valid`
-asserted after successful initialisation, including while the caller is idle.
+Once available, a sink without `ready` captures every rising edge with
+`valid` asserted, including while the caller is idle.
 Each snapshot becomes available at the following falling edge. An existing
 backlog can be received within the current simulation step.
 
@@ -140,5 +140,5 @@ during a receive discards them. An argument error before a receive starts
 leaves capture and the queue unchanged.
 
 The sender can keep transmitting while capture is stopped. Call
-`initialise()` to restart capture after a fault. After a pin-only reset, a
-healthy sink restarts capture on release. See [Capture without `ready`](examples/no-ready.md).
+`initialise()` to recover from a capture fault. A sink that monitors reset
+starts capture after the release interval. See [Capture without `ready`](examples/no-ready.md).

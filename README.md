@@ -41,8 +41,9 @@ AXI4 memory-mapped, AXI4-Lite, and AXI5-Stream extensions are not implemented.
 Tests cover Python 3.13.5, cocotb 2.1.0, and NVC 1.21.1 on Linux.
 
 Await `initialise()` before traffic and for explicit recovery from faults or
-caller cancellation. DUT reset is caller-controlled. Healthy pin-only resets
-recover automatically after release.
+caller cancellation. With a reset pin, setup can finish while reset is
+asserted. Release DUT reset before calling `wait_available()` to wait for
+the endpoint to resume. Healthy pin-only resets recover automatically.
 Clocks must contain literal `0` and `1` from before the first initialisation
 onwards; endpoints do not monitor this precondition. See
 [Lifecycle and recovery](https://slop-mopper.github.io/coaxi/lifecycle.html)

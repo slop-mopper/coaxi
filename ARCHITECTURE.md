@@ -214,9 +214,8 @@ Both endpoints accept keyword-only `reset: Signal | None = None` and
 `reset_active_high: bool = False`. Binding is independent of bus naming defaults,
 accepting exact names and one-bit handles (including non-zero vector indices).
 Polarity is not inferred. Literal pin 0/1 values are required. Construction
-is non-driving; monitoring begins with an immediate pin read in `initialise()`
-and ends with `close()`. A test that drives reset must let its write settle
-before starting initialisation and release the pin before awaiting completion.
+is non-driving. `initialise()` starts the monitor with its first sample in
+ReadOnly so pending writes take effect before validation. `close()` stops it.
 
 The base endpoint owns a reset watcher and a generation-guarded pin-cycle task.
 Every observed pin change invalidates release eligibility and pending work,
@@ -245,8 +244,10 @@ cycle. Invalid reset values latch ProtocolValueError; asynchronous cleanup
 failures latch their exception. The first fault is retained until explicit
 initialise()/close(), and exceptions are delivered through foreground operations
 rather than unobserved monitor tasks. Cancelled initialisation leaves monitoring
-armed for safety but manual recovery required. Initialisation waits through
-assertion/release and can block indefinitely without a running clock or release.
+armed for safety but manual recovery required. With a pin, initialisation
+waits for output clearing, not for release. `wait_available()` observes
+state changes until setup and release are complete, or reports a fault or
+unavailable setup state. Its cancellation does not affect availability.
 
 Both source and sink expose close(). It invalidates work, stops monitoring/capture
 and clears retained faults/state. Source/ready-backed sink outputs clear at a

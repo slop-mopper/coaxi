@@ -13,8 +13,8 @@ The source clears `valid`, `last`, and bound sidebands to zero, and calls the
 payload adapter's `clear()`. `HandlePayload` clears every payload leaf to zero;
 custom adapters define their own recovery values and can raise during clearing.
 The sink clears `ready`, queued transfers, and incomplete packets. It never
-calls the adapter's `clear()`. Without `ready`, capture starts as soon as
-initialisation succeeds.
+calls the adapter's `clear()`. Without `ready` or reset monitoring, capture
+starts when initialisation completes.
 
 If you initialise during traffic, reset or drain the DUT and coordinate with
 the peer before starting another packet.
@@ -34,10 +34,10 @@ source = AxiStreamSource(
 
 Choose the polarity explicitly; the default is active-low.
 The pin must be mutable one-bit logic and separate from the clock and stream
-signals. `initialise()` reads the pin as soon as it starts, before waiting
-for a clock edge. A cocotb assignment to `.value` may still be pending, so let
-the write settle before starting `initialise()`. Any sampled value other than
-literal `0` or `1` latches `ProtocolValueError`.
+signals. `initialise()` samples the pin after writes for the current simulator
+time step settle. Any sampled value other than literal `0` or `1` latches
+`ProtocolValueError`. The call clears the endpoint's outputs and returns
+without waiting for reset release or a clock edge.
 
 Assertion invalidates pending work, stops capture, discards queued transfers
 and incomplete packets, and clears owned outputs at the first writable
@@ -61,10 +61,15 @@ A healthy endpoint resumes after release, including capture without `ready`.
 Calls during assertion or release raise `EndpointStateError`. The endpoint
 keeps reporting a previous fault until `initialise()` or `close()`.
 
-`initialise()` waits through the release interval even if the pin is already
-inactive. If the test starts with reset asserted, start `initialise()` for
-each endpoint as a task, release reset after a rising edge, then await the
-tasks. Awaiting a call before the code that releases reset blocks that code.
+The release interval applies even when the pin is already inactive at setup.
+In code that previously sent or received immediately after `initialise()`
+with a reset pin, add `await endpoint.wait_available()` before that first
+transfer. If the same task controls reset, deassert it before waiting.
+The wait is optional: once the interval ends, transfers work automatically.
+An early send or receive raises `EndpointStateError` without queuing a
+transfer. `wait_available()` can block while reset is asserted or the clock
+is stopped. Cancelling the wait leaves the endpoint unchanged.
+
 See [Start and recover with a reset pin](examples/reset-recovery.md).
 
 Cancelling `initialise()` leaves reset monitoring active to clear outputs on

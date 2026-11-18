@@ -133,6 +133,7 @@ class _Endpoint[T]:
 		self._pin_cycle: object | None = None
 		self._pin_task: Task[None] | None = None
 		self._pin_value: str | None = None
+		self._pin_cleared = False
 		self._pin_ready = False
 		self._pause_pattern: Iterator[bool | int] | None = None
 		self._pause_task: Task[None] | None = None
@@ -153,8 +154,8 @@ class _Endpoint[T]:
 
 		Sample in `ReadOnly` after each rising edge for the next falling-edge drive,
 		including when idle. Replacing or exhausting a pattern unpauses the
-		endpoint. Sampling starts after initialisation and resumes from the
-		same position after reset or reinitialisation. `close()` discards the
+		endpoint. Sampling runs while the endpoint is available and resumes from
+		the same position after reset or reinitialisation. `close()` discards the
 		pattern. A sink without `ready` cannot pause. An offered source beat
 		stays valid until accepted. Use a test timeout for patterns that can
 		keep the endpoint paused indefinitely.
@@ -212,12 +213,21 @@ class _Endpoint[T]:
 				self._needs_initialise = True
 				self._invalidate()
 
-	def _begin(self) -> object:
+	def _check_setup(self) -> None:
 		self._observe_reset()
 		if self._fault is not None:
 			raise self._fault
-		if not self._initialised or self._resetting:
-			raise EndpointStateError("await initialise() before using this endpoint; reset may be held or releasing")
+		if self._resetting:
+			raise EndpointStateError("initialise or close is in progress")
+		if self._needs_initialise:
+			raise EndpointStateError("await initialise() before using this endpoint")
+
+	def _begin(self) -> object:
+		self._check_setup()
+		if not self._initialised:
+			if self._pin_value == str(int(self._reset_active_high)):
+				raise EndpointStateError("reset is asserted; release it before starting a transfer")
+			raise EndpointStateError("reset release is in progress; await wait_available() before starting a transfer")
 		if self._active is not None:
 			raise EndpointStateError("only one operation may be active on an endpoint")
 		token = _Operation()
@@ -297,15 +307,19 @@ class _Endpoint[T]:
 		self._monitor_task = None
 		self._pin_task = None
 		self._pin_value = None
+		self._pin_cleared = False
 		self._pin_ready = False
 
-	def _observe_reset(self) -> None:
+	def _observe_reset(self, *, first_sample: bool = False) -> None:
 		if self._reset is None or self._monitor_generation is None:
+			return
+		if self._pin_value is None and not first_sample:
 			return
 		value = str(self._reset.value)
 		if value == self._pin_value:
 			return
 		self._pin_value = value
+		self._pin_cleared = False
 		self._pin_ready = False
 		if value not in ("0", "1"):
 			if self._fault is None:
@@ -320,13 +334,14 @@ class _Endpoint[T]:
 		self._pin_task = cocotb.start_soon(self._settle_reset(self._monitor_generation, cycle, inactive))
 		_log.debug("%s reset pin=%s, inactive=%s", type(self).__name__, value, inactive)
 
-	async def _watch_reset(self, generation: object) -> None:
-		assert self._reset is not None
+	async def _monitor_reset(self, generation: object) -> None:
 		try:
-			while self._monitor_generation is generation:
-				await ValueChange(self._reset)
-				if self._monitor_generation is generation:
-					self._observe_reset()
+			# A cocotb write in the caller's phase may not be visible yet.
+			if current_gpi_trigger() is not ReadOnly():
+				await ReadOnly()
+			if self._monitor_generation is generation:
+				self._observe_reset(first_sample=True)
+				await self._watch_reset(generation)
 		except Exception as exc:
 			# Callback registration/read failures belong to the endpoint, just
 			# like collector faults. Never let an unobserved task abort the test.
@@ -335,6 +350,13 @@ class _Endpoint[T]:
 					self._fault = exc
 				self._needs_initialise = True
 				self._invalidate()
+
+	async def _watch_reset(self, generation: object) -> None:
+		assert self._reset is not None
+		while self._monitor_generation is generation:
+			await ValueChange(self._reset)
+			if self._monitor_generation is generation:
+				self._observe_reset()
 
 	def _owns_pin_cycle(self, generation: object, cycle: object) -> bool:
 		return self._monitor_generation is generation and self._pin_cycle is cycle
@@ -346,6 +368,7 @@ class _Endpoint[T]:
 			if not self._owns_pin_cycle(generation, cycle):
 				return
 			self._clear()
+			self._pin_cleared = True
 			self._signal_state()
 			if not inactive:
 				return
@@ -374,19 +397,17 @@ class _Endpoint[T]:
 	async def initialise(self) -> None:
 		"""Initialise or recover local state and owned outputs; never drive reset.
 
-		Without a reset pin, clear at the next falling edge. With one, start
-		monitoring and clear as soon as writes are permitted, then wait through
-		any asserted reset and its release gate: inactive sampled at R0, then
-		R1, then F1. The earliest transfer acceptance is R2. Call initially,
-		after errors/cancellation, or to reopen after close(). The clock must
-		contain literal 0/1 from before initialisation onwards (unmonitored).
-		The caller must deassert the pin synchronously; this is no synchroniser.
+		Without a reset pin, clear at the next falling edge. With one, sample
+		the settled pin and clear at the first writable opportunity. Return
+		even if reset is held or the clock is stopped. Use `wait_available()` to
+		wait for release if needed. An unresolved pin raises `ProtocolValueError`.
 
-		Pending operations are invalidated, retained traffic is discarded, and
-		accepted traffic cannot be undone. Catch TransferReset inside spawned
-		operations. Overlapping initialise/close calls fail. A held reset or
-		stopped clock can make this wait indefinitely. Cancellation leaves manual
-		recovery required, but an armed pin monitor continues output safety.
+		Pending operations are interrupted and buffered traffic is discarded.
+		Overlapping `initialise()` and `close()` calls fail. Cancelling setup
+		requires another call; reset monitoring continues if started.
+
+		Returns:
+		  None.
 		"""
 		if self._resetting:
 			raise EndpointStateError("initialise or close is already active")
@@ -402,20 +423,38 @@ class _Endpoint[T]:
 			else:
 				generation = object()
 				self._monitor_generation = generation
-				self._observe_reset()
-				self._monitor_task = cocotb.start_soon(self._watch_reset(generation))
-				while not self._pin_ready:
+				self._monitor_task = cocotb.start_soon(self._monitor_reset(generation))
+				while not self._pin_cleared:
 					if self._fault is not None:
 						raise self._fault
 					await self._state_changed.wait()
 			if self._fault is not None:
 				raise self._fault
 			self._needs_initialise = False
-			self._initialised = True
-			self._after_initialise()
+			if self._reset is None or self._pin_ready:
+				self._initialised = True
+				self._after_initialise()
 			_log.debug("%s initialised", type(self).__name__)
 		finally:
 			self._resetting = False
+
+	async def wait_available(self) -> None:
+		"""Wait for an initialised endpoint to finish reset recovery.
+
+		After an inactive sample at rising edge R0, wait for R1 and its falling
+		edge F1. The first transfer can be accepted at R2. The endpoint becomes
+		available automatically; this call does not wait for traffic or `ready`.
+		Before setup or after `close()`, raise `EndpointStateError`. Report any
+		recorded fault. Cancelling the wait leaves the endpoint unchanged.
+
+		Returns:
+		  None.
+		"""
+		while True:
+			self._check_setup()
+			if self._initialised:
+				return
+			await self._state_changed.wait()
 
 	async def close(self) -> None:
 		"""Stop monitoring, capture, and pause sampling, and invalidate work.
@@ -631,7 +670,7 @@ class AxiStreamSink[T = PayloadValue | None](_Endpoint[T]):
 	Await initialise() before use. The sink owns only ready and never clears incoming
 	payloads. Only one recv or recv_frame may be active. With ready, reception
 	is call-driven; immediately consecutive awaits sustain one beat per cycle.
-	Without ready, initialisation starts continuous capture, including while idle.
+	Without ready, capture runs while the sink is available, including while idle.
 	``buffer_capacity`` is an optional positive count of all retained,
 	undelivered transfers, including packet prefixes and in-flight snapshots.
 	None is unlimited. A finite capacity is rejected on ready-backed buses.

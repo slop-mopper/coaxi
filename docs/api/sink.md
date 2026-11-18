@@ -38,7 +38,8 @@ initialisation; the sink does not check clock values.
 ```
 
 With `ready`, the sink receives only during a call. Without `ready`, it
-captures transfers after initialisation even when no receive is pending.
+captures transfers as soon as the sink becomes available, even when no
+receive is pending.
 See [Streams without `ready`](../transfers.md#streams-without-ready) for
 capacity and overflow.
 
@@ -121,16 +122,34 @@ for reset and interruption.
 ```{py:method} AxiStreamSink.initialise() -> None
 :async:
 
-:returns: `None`, when local recovery and any reset-release interval have completed and continuous capture has started if needed.
+:returns: `None`, after local recovery and, if configured, starting reset monitoring.
 :raises EndpointStateError: Initialisation or `close()` is already active.
 :raises ProtocolValueError: The monitored reset pin is invalid.
 ```
 
 Invalidates pending work, discards queued transfers and incomplete packets,
-acknowledges faults, and clears `ready`. Without a reset pin, waits for a falling
-edge. With monitoring, waits through any asserted reset and release interval.
-DUT reset is caller-controlled. A stopped clock or asserted reset can make
-this wait indefinitely.
+clears faults, and clears `ready`. Without a reset pin, waits for a falling
+edge. With a reset pin, the first sample follows pending simulator writes,
+and the call can finish while reset is asserted or the clock is stopped.
+The caller controls DUT reset. Cancelling setup requires another call
+before receiving.
+
+## wait_available
+
+```{py:method} AxiStreamSink.wait_available() -> None
+:async:
+
+:returns: `None`, when local setup and any reset-release interval have finished.
+:raises EndpointStateError: Initialisation is required, or initialisation or `close()` is in progress.
+:raises ProtocolValueError: The monitored reset pin is invalid.
+```
+
+Call after `initialise()` and after deasserting reset, or let another task
+release reset while this call waits. The sink becomes available automatically
+after the [release interval](../lifecycle.md#reset-pin-monitoring), starting
+capture if `ready` is absent. This call does not wait for traffic or for a
+pending receive. It reports any recorded fault. Cancelling the wait leaves
+the sink unchanged.
 
 ## close
 

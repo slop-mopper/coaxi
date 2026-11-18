@@ -1,10 +1,12 @@
 # Start and recover with a reset pin
 
-Start both endpoints while an active-high reset is asserted. The VHDL pin
-starts at `U`, so let the write of `1` take effect before starting
-`initialise()`. Both calls wait for the test to release reset. The test then
-asserts reset during a stalled send, checks that the send raises `TransferReset`
-and clears `valid`, and sends a different value after release.
+The VHDL reset pin starts at `U`. The test writes `1` and calls `initialise()`
+on both endpoints while the clock is stopped. Initialisation samples the
+settled pin and returns while reset is asserted. The test starts the clock,
+releases reset, and calls `wait_available()` before sending.
+
+The test then asserts reset during a stalled send, checks for `TransferReset`
+and `valid` going low, and sends a different value after release.
 
 ```{literalinclude} ../../examples/reset_recovery.py
 :language: python

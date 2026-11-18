@@ -15,7 +15,7 @@ from cocotb.clock import Clock
 from cocotb.types import LogicArray
 from cocotb.handle import HierarchyObject, LogicObject, LogicArrayObject
 from cocotb.simtime import get_sim_time
-from cocotb.triggers import Event, Timer, ReadOnly, RisingEdge, FallingEdge
+from cocotb.triggers import Event, Timer, ReadOnly, RisingEdge, FallingEdge, NullTrigger
 
 from coaxi import (
 	AxiStreamBus,
@@ -93,24 +93,24 @@ async def release_gate(dut: HierarchyObject, high: bool) -> None:
 	dut.sb_tuser.value = 4
 	dut.sb_tid.value = 1
 	sink = AxiStreamSink(_bus(dut, ready=False), "beat_clock", reset=pin, reset_active_high=high)
-	initialising = cocotb.start_soon(sink.initialise())
-	await Timer(1, unit="ns")
-	assert not initialising.done()
+	await sink.initialise()
+	waiting = cocotb.start_soon(sink.wait_available())
 	assert str(pin.value) == str(int(high))  # Monitoring never drives the pin.
-	with pytest.raises(EndpointStateError):
+	with pytest.raises(EndpointStateError, match="reset is asserted"):
 		await sink.recv()
 	await _edge(dut, True)  # Last rising edge with reset held.
 	pin.value = int(not high)
 	await _edge(dut, False)
 	await _edge(dut, True)  # R0.
-	assert not initialising.done() and sink._retained == 0
-	with pytest.raises(EndpointStateError):
+	assert not waiting.done() and sink._retained == 0
+	with pytest.raises(EndpointStateError, match="release is in progress"):
 		await sink.recv()
 	await _edge(dut, False)
 	await _edge(dut, True)  # R1.
-	assert not initialising.done() and sink._retained == 0
+	assert not waiting.done() and sink._retained == 0
 	await _edge(dut, False)  # F1: capture is armed, nothing accepted yet.
-	await initialising
+	assert waiting.done()
+	await waiting
 	assert sink._retained == 0
 	await _edge(dut, True)  # R2: exactly one acceptance.
 	assert sink._retained == 1
@@ -118,6 +118,28 @@ async def release_gate(dut: HierarchyObject, high: bool) -> None:
 	assert _number(await sink.recv()) == 0xFFFF
 	assert sink._retained == 0
 	await sink.close()
+
+
+@cocotb.test(timeout_time=1000, timeout_unit="ns")
+async def availability_wait_cancellation_and_close(dut: HierarchyObject) -> None:
+	"""Cancelling a waiter leaves setup intact; close wakes a pending waiter."""
+	await _setup(dut)
+	pin = _pin(dut, True)
+	pin.value = 1
+	sink = AxiStreamSink(_bus(dut, ready=False), "beat_clock", reset=pin, reset_active_high=True)
+	await sink.initialise()
+	cancelled = cocotb.start_soon(sink.wait_available())
+	waiting = cocotb.start_soon(_result(sink.wait_available()))
+	await NullTrigger()
+	assert not cancelled.done() and not waiting.done()
+	cancelled.cancel()
+	with pytest.raises(CancelledError):
+		await cancelled
+	with pytest.raises(EndpointStateError, match="reset is asserted"):
+		await sink.recv()
+	assert not waiting.done()
+	await sink.close()
+	assert isinstance(await waiting, EndpointStateError)
 
 
 @cocotb.test(timeout_time=5000, timeout_unit="ns")
@@ -133,6 +155,8 @@ async def stopped_clock_assertion(dut: HierarchyObject, high: bool) -> None:
 	)
 	await source.initialise()
 	await sink.initialise()
+	await source.wait_available()
+	await sink.wait_available()
 	sending = cocotb.start_soon(_result(source.send(0xDEAD, last=True, sidebands=AxiStreamSidebands(user=7))))
 	receiving = cocotb.start_soon(_result(sink.recv()))
 	await FallingEdge(dut.beat_clock)
@@ -175,12 +199,12 @@ async def registered_full_rate(dut: HierarchyObject) -> None:
 		reset=dut.wipe_registers,
 		reset_active_high=True,
 	)
-	start_source = cocotb.start_soon(source.initialise())
-	start_sink = cocotb.start_soon(sink.initialise())
+	await source.initialise()
+	await sink.initialise()
 	await RisingEdge(dut.beat_clock)
 	dut.wipe_registers.value = 0
-	await start_source
-	await start_sink
+	await source.wait_available()
+	await sink.wait_available()
 	dut.allow_input.value = 1
 	inputs: list[int] = []
 	outputs: list[int] = []
@@ -228,6 +252,7 @@ async def capture_fault_and_recovery(dut: HierarchyObject, high: bool) -> None:
 	pin = _pin(dut, high)
 	sink = AxiStreamSink(_bus(dut, ready=False), "beat_clock", buffer_capacity=1, reset=pin, reset_active_high=high)
 	await sink.initialise()
+	await sink.wait_available()
 	dut.sb_tkeep.value = 3
 	dut.sb_tlast.value = 1
 	dut.sb_tvalid.value = 1
@@ -248,6 +273,7 @@ async def capture_fault_and_recovery(dut: HierarchyObject, high: bool) -> None:
 	with pytest.raises(OverflowError):
 		await sink.recv()
 	await sink.initialise()
+	await sink.wait_available()
 	dut.sb_tdata.value = 43
 	dut.sb_tvalid.value = 1
 	await RisingEdge(dut.beat_clock)
@@ -265,28 +291,38 @@ async def capture_fault_and_recovery(dut: HierarchyObject, high: bool) -> None:
 
 
 @cocotb.test(timeout_time=1000, timeout_unit="ns")
-async def initial_reset_write_pending(dut: HierarchyObject) -> None:
-	"""A queued VHDL write cannot hide an unresolved initial reset sample."""
+@cocotb.parametrize(resolve=[False, True])
+async def initial_reset_write_pending(dut: HierarchyObject, resolve: bool) -> None:
+	"""Sample after a queued write, but reject a pin that remains unresolved."""
 	pin = dut.startup_reset
+	pin.value = "U"
+	await Timer(1, unit="step")
 	assert str(pin.value) == "U"
 	source = AxiStreamSource(_bus(dut), "beat_clock", reset=pin, reset_active_high=True)
 	Clock(dut.beat_clock, 10, unit="ns").start(start_high=False)
-	pin.value = 1
-	with pytest.raises(ProtocolValueError, match="startup_reset.*got U") as first:
+	with pytest.raises(EndpointStateError, match="await initialise"):
+		await source.wait_available()
+	if resolve:
+		pin.value = 1
 		await source.initialise()
+		assert str(pin.value) == "1"
+		with pytest.raises(EndpointStateError, match="reset is asserted"):
+			await source.send(1, last=True)
+	else:
+		with pytest.raises(ProtocolValueError, match="startup_reset.*got U") as first:
+			await source.initialise()
+		with pytest.raises(ProtocolValueError) as again:
+			await source.wait_available()
+		assert again.value is first.value
 
-	await Timer(1, unit="ns")
-	assert str(pin.value) == "1"
 	await RisingEdge(dut.beat_clock)
 	pin.value = 0
-	for _ in range(3):
-		await FallingEdge(dut.beat_clock)
-	with pytest.raises(ProtocolValueError) as again:
-		await source.send(1, last=True)
-	assert again.value is first.value
-
-	await source.initialise()
+	if not resolve:
+		await source.initialise()
+	await source.wait_available()
 	await source.close()
+	with pytest.raises(EndpointStateError, match="await initialise"):
+		await source.wait_available()
 
 
 @cocotb.test(timeout_time=5000, timeout_unit="ns")
@@ -319,14 +355,17 @@ async def readonly_and_cancelled_initialise(dut: HierarchyObject) -> None:
 	source = AxiStreamSource(_bus(dut), "beat_clock", reset=pin)
 	await ReadOnly()
 	initialising = cocotb.start_soon(source.initialise())
-	await Timer(2, unit="step")
-	assert int(dut.sb_tvalid.value) == int(dut.sb_tdata.value) == 0
+	await NullTrigger()
 	assert not initialising.done()
 	with pytest.raises(EndpointStateError):
 		await source.initialise()
 	with pytest.raises(EndpointStateError):
 		await source.close()
 	initialising.cancel()
+	with pytest.raises(CancelledError):
+		await initialising
+	await Timer(2, unit="step")
+	assert int(dut.sb_tvalid.value) == int(dut.sb_tdata.value) == 0
 	cocotb.start_soon(Clock(dut.beat_clock, 10, unit="ns").start(start_high=False))
 	await _release(dut, False)
 	with pytest.raises(EndpointStateError):
@@ -357,8 +396,10 @@ async def reassert_during_release(dut: HierarchyObject, after_r1: bool) -> None:
 	pin.value = 0
 	source = AxiStreamSource(_bus(dut), "beat_clock", reset=pin)
 	sink = AxiStreamSink(_bus(dut, ready=False), "beat_clock", reset=pin)
-	initialising_source = cocotb.start_soon(source.initialise())
-	initialising_sink = cocotb.start_soon(sink.initialise())
+	await source.initialise()
+	await sink.initialise()
+	waiting_source = cocotb.start_soon(source.wait_available())
+	waiting_sink = cocotb.start_soon(sink.wait_available())
 	await _edge(dut, True)
 	pin.value = 1
 	await _edge(dut, False)
@@ -370,7 +411,7 @@ async def reassert_during_release(dut: HierarchyObject, after_r1: bool) -> None:
 	await _edge(dut, False)
 	await _edge(dut, True)
 	await _edge(dut, False)  # Past the obsolete release's F1.
-	assert not initialising_source.done() and not initialising_sink.done()
+	assert not waiting_source.done() and not waiting_sink.done()
 	assert int(dut.sb_tvalid.value) == 0 and sink._retained == 0
 	with pytest.raises(EndpointStateError):
 		await source.send(1, last=True)
@@ -378,13 +419,13 @@ async def reassert_during_release(dut: HierarchyObject, after_r1: bool) -> None:
 	pin.value = 1
 	await _edge(dut, False)
 	await _edge(dut, True)  # Replacement R0.
-	assert not initialising_source.done() and not initialising_sink.done()
+	assert not waiting_source.done() and not waiting_sink.done()
 	await _edge(dut, False)
 	await _edge(dut, True)  # Replacement R1.
-	assert not initialising_source.done() and not initialising_sink.done()
+	assert not waiting_source.done() and not waiting_sink.done()
 	await _edge(dut, False)
-	await initialising_source
-	await initialising_sink
+	await waiting_source
+	await waiting_sink
 	assert sink._retained == 0 and int(dut.sb_tvalid.value) == 0
 	await sink.close()
 	closing = cocotb.start_soon(source.close())
@@ -413,6 +454,8 @@ async def interruption_after_acceptance(dut: HierarchyObject, ready: bool) -> No
 	sink = AxiStreamSink(_bus(dut, ready=ready), "beat_clock", reset=pin, buffer_capacity=None if ready else 1)
 	await source.initialise()
 	await sink.initialise()
+	await source.wait_available()
+	await sink.wait_available()
 	accepted: list[int] = []
 	observed = Event()
 
@@ -471,6 +514,7 @@ async def prior_cancellation_and_clear_fault(dut: HierarchyObject) -> None:
 	payload = SwitchPayload()
 	source = AxiStreamSource(_bus(dut), "beat_clock", reset=pin, payload=payload)
 	await source.initialise()
+	await source.wait_available()
 	sending = cocotb.start_soon(source.send(8, last=True))
 	await FallingEdge(dut.beat_clock)
 	await Timer(1, unit="ns")
@@ -501,6 +545,7 @@ async def prior_cancellation_and_clear_fault(dut: HierarchyObject) -> None:
 	assert again.value is first.value
 	payload.fail = False
 	await source.initialise()
+	await source.wait_available()
 	dut.sb_tready.value = 1
 	await source.send(12, last=True)
 	await source.close()
@@ -527,6 +572,7 @@ async def stale_foreground_operation(dut: HierarchyObject) -> None:
 
 	source = DelayedSource(_bus(dut), "beat_clock", reset=pin)
 	await source.initialise()
+	await source.wait_available()
 	old = cocotb.start_soon(_result(source.send(11, last=True)))
 	await parked.wait()
 	pin.value = 0
@@ -622,6 +668,8 @@ async def stopped_no_ready_packet(dut: HierarchyObject) -> None:
 	sink = AxiStreamSink(_bus(dut, ready=False), "beat_clock", reset=pin, buffer_capacity=2)
 	await source.initialise()
 	await sink.initialise()
+	await source.wait_available()
+	await sink.wait_available()
 	packet = cocotb.start_soon(_result(sink.recv_frame()))
 	await source.send(11, last=False, sidebands=AxiStreamSidebands(id=1))
 	await Timer(1, unit="ns")

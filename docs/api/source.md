@@ -125,7 +125,7 @@ resuming traffic.
 ```{py:method} AxiStreamSource.initialise() -> None
 :async:
 
-:returns: `None`, when local recovery and any reset-release interval have completed.
+:returns: `None`, after local recovery and, if configured, starting reset monitoring.
 :raises EndpointStateError: Initialisation or `close()` is already active.
 :raises ProtocolValueError: The monitored reset pin is invalid.
 ```
@@ -135,9 +135,25 @@ and bound sidebands. Clearing occurs at the next falling edge without reset
 monitoring, or at the first writable opportunity with it. Reset the DUT
 separately.
 
-Initialisation can wait indefinitely for a running clock or released reset.
-Cancellation requires a later successful initialisation. See
-[Lifecycle and recovery](../lifecycle.md) for asynchronous assertion and release timing.
+With a reset pin, the first sample follows pending simulator writes.
+The call can finish while reset is asserted or the clock is stopped.
+Cancelling setup requires another call before sending.
+
+## wait_available
+
+```{py:method} AxiStreamSource.wait_available() -> None
+:async:
+
+:returns: `None`, when local setup and any reset-release interval have finished.
+:raises EndpointStateError: Initialisation is required, or initialisation or `close()` is in progress.
+:raises ProtocolValueError: The monitored reset pin is invalid.
+```
+
+Call after `initialise()` and after deasserting reset, or let another task
+release reset while this call waits. The source becomes available automatically
+after the [release interval](../lifecycle.md#reset-pin-monitoring). This call
+does not check the peer's `ready` or wait for a pending send. It reports any
+recorded fault. Cancelling the wait leaves the source unchanged.
 
 ## close
 

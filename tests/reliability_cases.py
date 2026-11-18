@@ -342,6 +342,7 @@ async def lifecycle_accounting(dut: HierarchyObject, seed: int) -> None:
 	for epoch in range(_rounds()):
 		payload.failure = None
 		await sink.initialise()
+		await sink.wait_available()
 		tasks = [sink._monitor_task, sink._pin_task, sink._capture_task]
 		assert all(task is not None for task in tasks)
 		action = epoch % 6

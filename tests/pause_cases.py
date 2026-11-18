@@ -237,10 +237,9 @@ async def reset_and_close(dut: HierarchyObject, use_sink: bool) -> None:
 				await source.send(1, last=True)
 
 	endpoint.set_pause_generator(pauses())
-	init = cocotb.start_soon(endpoint.initialise())
+	await endpoint.initialise()
 	await _cycle(dut)  # R0
 	await _cycle(dut)  # R1, F1
-	await init
 	transfer = cocotb.start_soon(transfer_until_reset())
 	await _cycle(dut)
 	assert reads == [0]
@@ -258,10 +257,9 @@ async def reset_and_close(dut: HierarchyObject, use_sink: bool) -> None:
 	await _cycle(dut)  # R2
 	assert reads == [0, 1]
 
-	init = cocotb.start_soon(endpoint.initialise())
+	await endpoint.initialise()
 	await _cycle(dut)
 	await _cycle(dut)
-	await init
 	assert reads == [0, 1]
 	await _cycle(dut)
 	assert reads == [0, 1, 2]
