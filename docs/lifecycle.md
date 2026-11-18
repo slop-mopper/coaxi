@@ -21,8 +21,7 @@ the peer before starting another packet.
 
 ## Reset-pin monitoring
 
-To monitor an active-high reset pin, bind it when constructing the endpoint.
-Monitoring starts with `initialise()`:
+To monitor an active-high reset pin, bind it when constructing the endpoint:
 
 ```python
 source = AxiStreamSource(
@@ -31,13 +30,14 @@ source = AxiStreamSource(
 	reset="my_reset",
 	reset_active_high=True,
 )
-await source.initialise()
 ```
 
 Choose the polarity explicitly; the default is active-low.
 The pin must be mutable one-bit logic and separate from the clock and stream
-signals. Pin values must be literal `0` or `1`; weak and unresolved values
-latch `ProtocolValueError` and stop traffic.
+signals. `initialise()` reads the pin as soon as it starts, before waiting
+for a clock edge. A cocotb assignment to `.value` may still be pending, so let
+the write settle before starting `initialise()`. Any sampled value other than
+literal `0` or `1` latches `ProtocolValueError`.
 
 Assertion invalidates pending work, stops capture, discards queued transfers
 and incomplete packets, and clears owned outputs at the first writable
@@ -62,10 +62,13 @@ Calls during assertion or release raise `EndpointStateError`. The endpoint
 keeps reporting a previous fault until `initialise()` or `close()`.
 
 `initialise()` waits through the release interval even if the pin is already
-inactive. It can wait indefinitely if reset stays asserted or the clock stops.
-Cancelling it leaves reset monitoring active to clear outputs on assertion.
-Call `initialise()` again before starting traffic. See
-[Interrupt a stalled send with reset](examples/reset-recovery.md).
+inactive. If the test starts with reset asserted, start `initialise()` for
+each endpoint as a task, release reset after a rising edge, then await the
+tasks. Awaiting a call before the code that releases reset blocks that code.
+See [Start and recover with a reset pin](examples/reset-recovery.md).
+
+Cancelling `initialise()` leaves reset monitoring active to clear outputs on
+assertion. Call `initialise()` again before starting traffic.
 
 ## Errors and cancellation
 

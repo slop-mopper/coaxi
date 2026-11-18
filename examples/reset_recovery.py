@@ -2,26 +2,34 @@
 # SPDX-License-Identifier: CC0-1.0
 # This file was created by an AI model: openai/gpt-6.2-sol
 
-"""Interrupt a stalled send and resume after reset release."""
+"""Start with reset asserted, then interrupt a stalled send with reset."""
 
 import cocotb
 from cocotb.clock import Clock
-from cocotb.handle import HierarchyObject
-from cocotb.triggers import ReadOnly, RisingEdge, FallingEdge
+from cocotb.handle import HierarchyObject, LogicObject
+from cocotb.triggers import ReadOnly, RisingEdge, FallingEdge, Timer
 
 from coaxi import AxiStreamBus, AxiStreamSink, AxiStreamSource, TransferReset
 
 
 @cocotb.test(timeout_time=1000, timeout_unit="ns")
 async def reset_recovery(dut: HierarchyObject) -> None:
-	clock, reset = dut.beat_clock, dut.reset_lane
-	reset.value = 0
-	cocotb.start_soon(Clock(clock, 10, unit="ns").start(start_high=False))
+	clock, reset = dut.beat_clock, dut.startup_reset
+	assert isinstance(clock, LogicObject)
+	reset.value = 1
+	await Timer(1, unit="ns")  # Let the VHDL reset write take effect.
+	Clock(clock, 10, unit="ns").start(start_high=False)
 	bus = AxiStreamBus.bind(dut, prefix="plain", t_prefix=False)
 	source = AxiStreamSource(bus, clock, reset=reset, reset_active_high=True)
 	sink = AxiStreamSink(bus, clock, reset=reset, reset_active_high=True)
-	await source.initialise()
-	await sink.initialise()
+	source_init = cocotb.start_soon(source.initialise())
+	sink_init = cocotb.start_soon(sink.initialise())
+	for _ in range(3):
+		await RisingEdge(clock)
+	assert not source_init.done() and not sink_init.done()
+	reset.value = 0  # Release after a rising edge, before awaiting initialisation.
+	await source_init
+	await sink_init
 
 	async def interrupted_send() -> None:
 		try:

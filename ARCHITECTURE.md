@@ -214,7 +214,9 @@ Both endpoints accept keyword-only `reset: Signal | None = None` and
 `reset_active_high: bool = False`. Binding is independent of bus naming defaults,
 accepting exact names and one-bit handles (including non-zero vector indices).
 Polarity is not inferred. Literal pin 0/1 values are required. Construction
-is non-driving; monitoring begins with initialise() and ends with close().
+is non-driving; monitoring begins with an immediate pin read in `initialise()`
+and ends with `close()`. A test that drives reset must let its write settle
+before starting initialisation and release the pin before awaiting completion.
 
 The base endpoint owns a reset watcher and a generation-guarded pin-cycle task.
 Every observed pin change invalidates release eligibility and pending work,

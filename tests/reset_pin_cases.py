@@ -264,6 +264,31 @@ async def capture_fault_and_recovery(dut: HierarchyObject, high: bool) -> None:
 	await sink.close()
 
 
+@cocotb.test(timeout_time=1000, timeout_unit="ns")
+async def initial_reset_write_pending(dut: HierarchyObject) -> None:
+	"""A queued VHDL write cannot hide an unresolved initial reset sample."""
+	pin = dut.startup_reset
+	assert str(pin.value) == "U"
+	source = AxiStreamSource(_bus(dut), "beat_clock", reset=pin, reset_active_high=True)
+	Clock(dut.beat_clock, 10, unit="ns").start(start_high=False)
+	pin.value = 1
+	with pytest.raises(ProtocolValueError, match="startup_reset.*got U") as first:
+		await source.initialise()
+
+	await Timer(1, unit="ns")
+	assert str(pin.value) == "1"
+	await RisingEdge(dut.beat_clock)
+	pin.value = 0
+	for _ in range(3):
+		await FallingEdge(dut.beat_clock)
+	with pytest.raises(ProtocolValueError) as again:
+		await source.send(1, last=True)
+	assert again.value is first.value
+
+	await source.initialise()
+	await source.close()
+
+
 @cocotb.test(timeout_time=5000, timeout_unit="ns")
 @cocotb.parametrize(value=["X", "U", "L", "H", "Z"])
 async def invalid_pin(dut: HierarchyObject, value: str) -> None:
