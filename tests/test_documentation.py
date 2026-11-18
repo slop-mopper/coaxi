@@ -287,7 +287,7 @@ def test_rendered_reference_layout(tmp_path: Path) -> None:
 		assert article.prose, path
 		prose = "".join(article.prose)
 		assert "`" not in prose, (path, "inline-code delimiters must not appear in rendered prose")
-		assert not re.search(r"\{(?:py:\w+|ref|doc)\}", prose), (path, "unprocessed MyST role")
+		assert not re.search(r"\{(?:py:\w+|ref|doc|download)\}", prose), (path, "unprocessed MyST role")
 	for name, page in (("AxiStreamBus", "bus"), ("AxiStreamSource", "source"), ("AxiStreamSink", "sink")):
 		html = (tmp_path / "html" / "api" / f"{page}.html").read_text(encoding="utf-8")
 		signature = html.split(f'id="coaxi.{name}">', maxsplit=1)[1].split("</dt>", maxsplit=1)[0]
@@ -298,8 +298,8 @@ def test_rendered_reference_layout(tmp_path: Path) -> None:
 		assert 'class="sig-return"' in signature, name
 
 
-def test_guide_python_syntax_and_tested_tutorial() -> None:
-	"""Parse guide snippets and keep the tutorial attached to the simulator-tested source."""
+def test_guide_python_syntax_and_tested_examples() -> None:
+	"""Parse Python snippets and check that example pages include tested sources."""
 	docs = Path(__file__).resolve().parents[1] / "docs"
 	for path in docs.rglob("*.md"):
 		if "_build" in path.parts:
@@ -308,10 +308,23 @@ def test_guide_python_syntax_and_tested_tutorial() -> None:
 		assert "SPDX-License-Identifier:" not in text, path
 		for code in re.findall(r"^```python\n(.*?)^```", text, re.MULTILINE | re.DOTALL):
 			ast.parse(code, filename=str(path))
-	tutorial = (docs / "getting-started.md").read_text(encoding="utf-8")
-	assert "```{literalinclude} ../examples/stream_loopback.py\n" in tutorial
-	assert ":lines: 8-" in tutorial
-	assert "uv run pytest -q tests/test_simulation.py -k example" in tutorial
+	examples = {
+		"loopback": ("stream_loopback", "example", 8),
+		"custom-payload": ("custom_payload", "custom_payload", 7),
+		"backpressure": ("backpressure", "backpressure", 7),
+		"interleaved": ("interleaved", "interleaved", 7),
+		"no-ready": ("no_ready", "no_ready", 7),
+		"reset-recovery": ("reset_recovery", "reset_recovery", 7),
+	}
+	for page, (module, suite, first_line) in examples.items():
+		text = (docs / "examples" / f"{page}.md").read_text(encoding="utf-8")
+		source_directive = (
+			f"```{{literalinclude}} ../../examples/{module}.py\n:language: python\n:lines: {first_line}-\n```"
+		)
+		assert source_directive in text, page
+		assert f"uv run --locked pytest -q tests/test_simulation.py -k {suite}\n" in text
+	custom = (docs / "examples" / "custom-payload.md").read_text(encoding="utf-8")
+	assert "```{literalinclude} ../../examples/iq_loopback.vhd\n:language: vhdl\n:lines: 5-\n```" in custom
 
 
 def test_pages_workflow_permissions() -> None:

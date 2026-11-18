@@ -1,8 +1,7 @@
 # Sidebands and byte qualifiers
 
-All sidebands are selected explicitly when binding.
-Ordinary sends use defaults for bound sidebands.
-Use {py:class}`coaxi.AxiStreamSidebands` to override individual values:
+Select sidebands when binding. Use {py:class}`coaxi.AxiStreamSidebands` to
+override their values on a send:
 
 ```python
 from coaxi import AxiStreamSidebands
@@ -14,8 +13,8 @@ await source.send(
 )
 ```
 
-This assumes a 16-bit `data` bus with `last`, `keep`, and a sufficiently wide `user`
-signal. Omitted source metadata uses these defaults on bound signals:
+This send needs 16-bit `data`, `last`, `keep`, and at least two bits of `user`.
+Omit `sidebands` or set a field to `None` to use its default on a bound signal:
 
 | Signal | Default |
 |---|---|
@@ -27,15 +26,14 @@ Explicit metadata for an absent signal is an error. Integers must be unsigned
 and fit the signal width. Logic strings and logic values must match its width.
 Meta-valued sidebands are supported for deliberate tests.
 
-Reception produces logic snapshots of the wire values. A missing signal
-appears as `None`. Apply the defaults above when interpreting absent signals.
+Receives return the sampled logic values, or `None` for an unbound signal.
 
 ## Byte lanes
 
 With `data` present, `keep` and `strb` require byte-aligned logic-vector data and
 one qualifier bit per byte. The rightmost qualifier bit describes the least
 significant byte, independently of the HDL index range.
-Custom adapters also require this physical byte-lane layout.
+Binding checks the HDL `data` handle even with a custom adapter.
 
 | `keep` | `strb` | Byte meaning |
 |---|---|---|
@@ -45,16 +43,16 @@ Custom adapters also require this physical byte-lane layout.
 | 0 | 1 | Reserved; rejected |
 
 Absent `keep` means every lane is present. Absent `strb` follows effective `keep`.
-A literal reserved pair is rejected before a single send begins and after
-acceptance on reception. Meta-valued qualifiers are captured as logic values;
-the caller must assess their protocol validity.
+For a literal reserved pair, `send()` raises `ValueError` before driving;
+the sink raises `ProtocolValueError` after acceptance. The sink returns
+meta-valued qualifiers as sampled. Check their validity in the test.
 
 Without `data`, `keep` defines its own lane count; `strb` is forbidden.
 `last`, `user`, `id`, and `dest` support any payload shape.
 
 ## Frame metadata
 
-A frame may supply one metadata value per payload:
+When passing `sidebands` to `send_frame()`, supply one entry per payload:
 
 ```python
 await source.send_frame(
@@ -66,8 +64,10 @@ await source.send_frame(
 )
 ```
 
-This assumes bound `last`, `id`, and two-bit `keep`. Frame helpers require literal
-binary identifiers and a constant effective `(id, dest)` for each packet.
-Payload and metadata validation occurs as each transfer is prepared, so an
-in-progress frame error can follow an already accepted prefix.
-Keep the sequences and their values unchanged while sending.
+This frame needs `last`, two-bit `keep`, and at least two bits of `id`.
+`send_frame()` uses one binary `(id, dest)` pair for the whole packet;
+unbound identifiers count as zero. Keep both sequences unchanged while
+sending. If a later entry is invalid, the peer may have accepted earlier beats.
+
+See [Interleaved packets and byte qualifiers](examples/interleaved.md) for
+sending by ID with `send()` and collecting by ID with `recv_frame()`.

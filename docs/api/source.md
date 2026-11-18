@@ -3,9 +3,9 @@
 ```{py:currentmodule} coaxi
 ```
 
-Drives source-owned signals after `initialise()`. The caller must supply a
-clock containing literal `0` and `1` from before the first initialisation
-onwards; endpoints do not monitor clock values.
+Drives `data`, `valid`, and bound sidebands. Await `initialise()` before
+sending. Supply a clock with literal `0` and `1` from before initialisation;
+the source does not check clock values.
 
 ```{py:class} AxiStreamSource[T = PayloadValue | None](bus: AxiStreamBus, clock: Signal, *, payload: Payload[T] | None = None, reset: Signal | None = None, reset_active_high: bool = False) -> None
 
@@ -33,11 +33,8 @@ onwards; endpoints do not monitor clock values.
 :returns: `None`.
 ```
 
-Default endpoints use `PayloadValue | None`. Supplying a `Payload[T]` adapter
-selects `T` through the constructor overloads.
-Only one send operation can be active at a time. Payload and adapter errors
-propagate with their original exception types, including errors during
-initialisation or `close()`.
+Run one send at a time. Adapter exceptions propagate unchanged, including
+errors during `initialise()` or `close()`.
 
 ## set_pause_generator
 
@@ -84,9 +81,9 @@ timing, exhaustion, and iteration errors.
 :raises TransferReset: Reset, initialisation, or `close()` interrupts the operation.
 ```
 
-Works with framed and unframed streams. Drives begin at a falling edge and
-remain stable through backpressure. Without `ready`, the next rising edge
-with `valid` asserted accepts. Immediately consecutive calls can sustain one transfer per rising edge.
+The source drives at a falling edge and keeps an offered beat stable until
+acceptance. Without `ready`, the next rising edge accepts it. See
+[Handshake timing](../transfers.md#handshake-timing) for consecutive calls.
 
 Invalid `last` or metadata fails before starting work. Payload failures occur
 during the operation and require recovery. Errors and cancellation can occur
@@ -118,9 +115,10 @@ Requires `last` and asserts it on the final transfer. The effective `(id, dest)`
 stays constant and must be literal binary. Use individual `send()` calls to
 interleave packets.
 
-The endpoint is reserved for the whole frame. Payloads and metadata are
-validated per transfer, so later failures may follow an accepted prefix.
-Coordinate recovery with the peer to restore packet alignment.
+Wait for the frame to finish before starting another send. The source
+checks each beat before driving it; the peer may already have accepted
+earlier beats when a later one fails. Check the peer's packet state before
+resuming traffic.
 
 ## initialise
 
@@ -132,10 +130,10 @@ Coordinate recovery with the peer to restore packet alignment.
 :raises ProtocolValueError: The monitored reset pin is invalid.
 ```
 
-Invalidates pending operations, acknowledges faults, and clears `valid`, `last`,
-payload, and bound sidebands. Without a reset pin, clearing occurs at a falling
-edge. With monitoring, clearing occurs at the first writable opportunity.
-Waits through any asserted reset and release interval. DUT reset is caller-controlled.
+Interrupts active work, clears faults, and clears `valid`, `last`, payload,
+and bound sidebands. Clearing occurs at the next falling edge without reset
+monitoring, or at the first writable opportunity with it. Reset the DUT
+separately.
 
 Initialisation can wait indefinitely for a running clock or released reset.
 Cancellation requires a later successful initialisation. See

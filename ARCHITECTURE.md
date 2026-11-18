@@ -434,7 +434,11 @@ There is no public API or protocol implementation change in this test layer.
   path, a two-field signed IQ record and undriven scalar/vector-control signals.
 - `examples/stream_loopback.py` is a bounded cocotb usage example for unframed
   vectors and signed IQ-record frame helpers on the fixture's undriven buses.
-- `tests/test_simulation.py` runs the cocotb regression and usage example with
+- `examples/custom_payload.py` binds a Python IQ dataclass to the input and
+  output records of `examples/iq_loopback.vhd`. The other examples use the
+  stream fixture to test backpressure, interleaving and byte qualifiers,
+  capture without `ready` or `data`, and reset interruption and recovery.
+- `tests/test_simulation.py` runs the cocotb regression and usage examples with
   `nvc` in both inertial write modes. `uv run pytest -q` runs the Python and
   simulator tests.
 
@@ -469,18 +473,18 @@ regressions compare its parameter names, kinds, defaults, and annotations agains
 the installed public API, and check export/method coverage. With the docs group
 installed, a temporary strict HTML build checks parameter bullets, description
 paragraphs, the single Returns row, and multiline signatures. It also checks
-the numeric guide's operator fields and scans every guide and reference page
-for unprocessed inline-code delimiters and MyST roles outside literal content.
+the numeric guide's operator fields and scans all pages for unprocessed
+inline-code delimiters and MyST roles outside literal content.
 Distribution checks verify that all documentation sources are included in the
 sdist and generated HTML and doctrees are excluded.
 
-The tutorial includes `examples/stream_loopback.py` directly; the normal simulator
-suite runs that source in both write modes. Numeric examples run through Sphinx
-doctest. The build resolves internal references strictly; a finite list of
-external cocotb types and the generic T are displayed without inventory lookup,
-so HTML builds do not need network access. The API index links their upstream
-documentation. No import mocks or source-path overrides are used. Generated HTML
-is written to the ignored `docs/_build/html` directory.
+The examples section includes the cocotb test sources and the IQ loopback HDL
+directly. Other simulation examples link to the shared HDL fixture. The
+simulator suite runs each example in both write modes. Sphinx doctest runs the
+arithmetic example and numeric snippets. The build checks internal references.
+An allowlist covers cocotb types and the generic `T` so builds do not need
+external inventories. The API index links the cocotb reference. The build
+uses the installed package and writes HTML to `docs/_build/html`.
 
 `.github/workflows/docs.yml` builds with the locked documentation dependencies,
 nitpicky reference checks and warnings treated as errors, followed by the

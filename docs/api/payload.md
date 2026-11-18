@@ -6,21 +6,22 @@
 ```{py:class} Payload[T]
 ```
 
-Structural protocol for synchronous application-defined payload access.
-Implement the methods below and supply the adapter to an endpoint; inheritance
-is optional.
+Adapter for an application payload type `T`. Bind the data handles in the
+adapter and pass it to the endpoint's `payload` parameter. An adapter can
+inherit from `Payload[T]` or implement its methods without inheritance.
 
-Bind handles in the implementation. Methods must complete synchronously.
-`read()` must return an independent snapshot, and `clear()` must define every
-owned leaf. The source uses `drive()` and `clear()`; the sink uses `read()`.
-Custom adapters can partially write before raising. Validate before writing
-where possible.
+The source calls `drive()` and `clear()`; the sink calls `read()`. These
+methods must be synchronous. Validate all fields before writing any of them
+to avoid leaving a partial payload on a conversion error.
+
+See [IQ samples as a dataclass](../examples/custom-payload.md) for the
+VHDL, adapter, and cocotb test.
 
 ## read
 
 ```{py:method} Payload.read() -> T
 
-:returns: An independent snapshot in the application's payload representation.
+:returns: A snapshot independent of later reads or writes.
 ```
 
 ## drive
@@ -30,7 +31,7 @@ where possible.
 :Parameters:
   - `value: T`
 
-    Application payload to validate and drive synchronously.
+    Application payload to convert and write.
 
 :returns: `None`.
 ```
@@ -39,7 +40,5 @@ where possible.
 
 ```{py:method} Payload.clear() -> None
 
-:returns: `None`, after scheduling a defined value for every owned leaf.
+:returns: `None`, after scheduling a defined value for every payload field the adapter drives.
 ```
-
-Endpoints handle handshakes and framing. See [Payloads and conversion](../payloads.md).

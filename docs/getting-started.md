@@ -12,12 +12,6 @@ cocotb is a runtime dependency. A simulator and cocotb's simulator integration
 are also required to run a testbench. Run Python tools through the testbench's
 `uv run` environment.
 
-For development from a coaxi source checkout:
-
-```console
-uv sync --locked
-```
-
 To use that checkout in a separate testbench project:
 
 ```console
@@ -62,32 +56,16 @@ await sending
 assert [to_unsigned(beat.data) for beat in frame] == [10, 20, 30]
 ```
 
-The assertion assumes vector payloads. In a complete test, use a bounded
-simulation-time timeout, for example
-`@cocotb.test(timeout_time=2000, timeout_unit="ns")`. An unterminated frame or
-stalled peer can otherwise wait indefinitely, including when a frame-length
-limit is set.
+This assumes a DUT out of reset that forwards the vector frame unchanged.
+Set a simulation-time timeout, for example
+`@cocotb.test(timeout_time=2000, timeout_unit="ns")`. `max_transfers` limits
+frame length; it cannot detect a stalled peer.
 
 ## Runnable loopback
 
-The source checkout includes a test with an unframed vector stream and a
-framed VHDL record stream. NVC must be installed and on `PATH`.
-Run it in the checkout:
-
-```console
-uv run pytest -q tests/test_simulation.py -k example
-```
-
-The runner builds `tests/hdl/stream_dut.vhd` as VHDL-2008 and runs this test
-in both cocotb inertial-write modes:
-
-```{literalinclude} ../examples/stream_loopback.py
-:language: python
-:lines: 8-
-```
-
-These loopbacks connect source and sink directly on buses in the fixture.
-For a real DUT, use separate input and output bindings as above.
+[Vector and record transfers](examples/loopback.md) shows a full cocotb test
+with one single transfer and one frame. The [Examples](examples/index.md)
+section also covers custom payloads, pauses, and reset.
 
 After traffic has finished, `await source.close()` and `await sink.close()`
 stop background work and clear owned outputs. See [Lifecycle and recovery](lifecycle.md)

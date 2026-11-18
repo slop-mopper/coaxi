@@ -3,9 +3,9 @@
 ```{py:currentmodule} coaxi
 ```
 
-Receives transfer snapshots and drives `ready`, when present.
-Await `initialise()` before use. The caller must supply a clock containing literal
-`0` and `1` from before the first initialisation onwards; endpoints do not monitor clock values.
+Receives transfers and drives `ready`, when present. Await `initialise()`
+before receiving. Supply a clock with literal `0` and `1` from before
+initialisation; the sink does not check clock values.
 
 ```{py:class} AxiStreamSink[T = PayloadValue | None](bus: AxiStreamBus, clock: Signal, *, payload: Payload[T] | None = None, buffer_capacity: int | None = None, reset: Signal | None = None, reset_active_high: bool = False) -> None
 
@@ -37,13 +37,10 @@ Await `initialise()` before use. The caller must supply a clock containing liter
 :returns: `None`.
 ```
 
-Default endpoints use `PayloadValue | None`. A `Payload[T]` adapter selects `T`
-through the constructor overloads. The sink uses the adapter's `read()` method.
-
-With `ready`, reception is call-driven. Without `ready`, successful initialisation
-starts continuous capture, including while the caller is idle.
-See [Streams without `ready`](../transfers.md#streams-without-ready) for capacity
-accounting and overflow.
+With `ready`, the sink receives only during a call. Without `ready`, it
+captures transfers after initialisation even when no receive is pending.
+See [Streams without `ready`](../transfers.md#streams-without-ready) for
+capacity and overflow.
 
 ## set_pause_generator
 
@@ -75,17 +72,15 @@ for clock timing, exhaustion, and iteration errors.
 :raises TransferReset: Reset, initialisation, or `close()` interrupts the receive.
 ```
 
-Works with framed and unframed streams. A sink with `ready` samples at the accepting
-rising edge and returns at the following falling edge. Immediately consecutive
-receives can keep `ready` asserted and sustain one transfer per rising edge.
-Without `ready`, existing backlog returns immediately; live snapshots become
-available at the following falling edge.
+The sink samples at the accepting rising edge and makes the transfer
+available at the following falling edge. Without `ready`, a queued transfer
+can return immediately.
 
-Raw reception discards the unfinished packet prefix for that transfer's
-identity. An unresolved identity discards all unfinished prefixes.
-Payload and sideband meta-values stay raw. The sink samples `valid` when
-`ready` is high or absent. Sampled `valid` and accepted `last` must be literal
-`0` or `1`. Capture faults are reported before older backlog.
+`recv()` discards any unfinished packet for that transfer's `(id, dest)`.
+An unresolved identity discards all unfinished packets. Payload and sideband
+meta-values are returned as sampled. The sink samples `valid` when `ready`
+is high or absent; sampled `valid` and accepted `last` must be literal `0` or
+`1`. A capture error is raised before any queued transfer is returned.
 
 ## recv_frame
 
@@ -106,22 +101,20 @@ Payload and sideband meta-values stay raw. The sink samples `valid` when
 :raises TransferReset: Reset, initialisation, or `close()` interrupts assembly.
 ```
 
-Requires `last`. Assembles independent packets by effective `(id, dest)`, with
-absent identifiers treated as zero. Packet identifiers must be literal binary.
-Packets return in completion order; other unfinished packets remain for later
-calls. Collection begins at the next transfer, possibly midway through a packet.
+Requires `last` and literal binary packet identifiers. An unbound `id` or
+`dest` counts as zero. `recv_frame()` returns whichever packet finishes
+first and keeps other unfinished packets for later calls. A call that starts
+part-way through a packet can return only its remaining transfers.
 
 A packet ending at the configured limit succeeds. Reaching the limit with
 `last` low raises after cleanup. A previously unfinished packet already at the
 limit fails before consuming more snapshots. Any number of identities can be incomplete.
 
-Use a simulation-time timeout. In-progress faults and caller cancellation discard
-queued transfers and incomplete packets, stop capture, and require `initialise()`.
-`TransferReset` follows the interrupting lifecycle operation: healthy pin-only
-reset resumes automatically, explicit initialisation recovers, and `close()`
-leaves the endpoint stopped. Physical traffic on a bus without `ready` continues
-while capture is stopped. Preflight argument errors leave the endpoint and
-queued traffic unchanged. Payload read errors propagate with their original types.
+Use a simulation-time timeout. A fault or cancellation during reception
+discards queued transfers and incomplete packets, stops capture, and requires
+`initialise()`. Argument checks before reception leave queued traffic unchanged.
+Adapter exceptions propagate unchanged. See [Lifecycle and recovery](../lifecycle.md)
+for reset and interruption.
 
 ## initialise
 

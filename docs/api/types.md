@@ -18,9 +18,9 @@ unchanged, including punctuation supported by cocotb.
 :annotation: = int | str | Logic | LogicArray | Mapping[str, PayloadValue]
 ```
 
-Default-adapter input type. Integers are unsigned, and mappings describe
-complete named-container fields. Reads produce logic snapshots or nested
-dictionaries. Data-less buses use `None`, which is separate from this alias.
+Values accepted by `HandlePayload.drive()`. Integers are unsigned. Supply
+one key per HDL field in a mapping. Reads return logic values or nested
+dictionaries. A bus without `data` uses `None`.
 
 ## SidebandValue
 
@@ -28,8 +28,8 @@ dictionaries. Data-less buses use `None`, which is separate from this alias.
 :annotation: = int | str | Logic | LogicArray
 ```
 
-Unsigned integer or width-matched logic value for source metadata.
-Deliberate meta-values are supported.
+Unsigned integer or width-matched logic value for a sideband. Logic values
+can include meta-values for tests that need them.
 
 ## to_unsigned
 

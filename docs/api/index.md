@@ -34,14 +34,10 @@ transfer-reset
 numeric-std-warning
 ```
 
-Conversion and argument checks can also raise `TypeError`, `ValueError`, or
-`OverflowError`. Custom adapter failures propagate through the calling operation.
-Overflow without `ready` raises `OverflowError`. See [Lifecycle and recovery](../lifecycle.md)
-for when explicit initialisation is required.
+See [Lifecycle and recovery](../lifecycle.md#errors-and-cancellation) for
+which errors require `initialise()` before the next transfer.
 
 Cocotb types in signatures are defined in
 [`cocotb.handle`](https://docs.cocotb.org/en/stable/library_reference.html#handles)
 and [`cocotb.types`](https://docs.cocotb.org/en/stable/library_reference.html#hdl-datatypes).
 `Mapping` and `Sequence` refer to `collections.abc`.
-The reference includes public operations; dataclass-generated equality and
-representation methods and inherited exception methods follow Python behaviour.

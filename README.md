@@ -13,12 +13,12 @@ a simulator and cocotb's simulator integration.
 ## Documentation
 
 [Getting started](https://slop-mopper.github.io/coaxi/getting-started.html),
-[user guide](https://slop-mopper.github.io/coaxi/), and
+[examples](https://slop-mopper.github.io/coaxi/examples/index.html), and
 [API reference](https://slop-mopper.github.io/coaxi/api/index.html).
 Sources are in [`docs/`](docs/).
 
 The runnable [vector and VHDL-record example](examples/stream_loopback.py)
-is included directly in the tutorial. From a source checkout with NVC on `PATH`:
+uses NVC. From a source checkout with NVC on `PATH`:
 
 ```console
 uv sync --locked

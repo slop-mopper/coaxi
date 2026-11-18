@@ -3,10 +3,9 @@
 ```{py:currentmodule} coaxi
 ```
 
-A frozen collection of bound stream handles. Construction validates bindings;
-endpoints drive the signals after initialisation. Use `bind()` for naming defaults
-and independent overrides. See [Signal binding](../binding.md) for examples
-and layout requirements.
+Holds the stream's signal handles and checks their shapes on construction.
+Use `bind()` to look up signals by name. See [Signal binding](../binding.md)
+for the required signal widths and layouts.
 
 ```{py:class} AxiStreamBus(data: SimHandleBase | None, valid: LogicObject | LogicArrayObject, ready: LogicObject | LogicArrayObject | None, last: LogicObject | LogicArrayObject | None = None, _entity: HierarchyObject | None = None, *, keep: LogicObject | LogicArrayObject | None = None, strb: LogicObject | LogicArrayObject | None = None, user: LogicObject | LogicArrayObject | None = None, id: LogicObject | LogicArrayObject | None = None, dest: LogicObject | LogicArrayObject | None = None) -> None
 
@@ -21,7 +20,7 @@ and layout requirements.
 
   - `ready: LogicObject | LogicArrayObject | None`
 
-    One-bit `ready` handle, or `None` for unconditional acceptance.
+    One-bit `ready` handle. With `None`, `valid` alone determines acceptance.
 
   - `last: LogicObject | LogicArrayObject | None`
 

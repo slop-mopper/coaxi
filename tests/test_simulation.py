@@ -11,6 +11,16 @@ import pytest
 from cocotb_tools.runner import get_runner
 
 
+_EXAMPLE_MODULES = {
+	"example": "stream_loopback",
+	"custom_payload": "custom_payload",
+	"backpressure": "backpressure",
+	"interleaved": "interleaved",
+	"no_ready": "no_ready",
+	"reset_recovery": "reset_recovery",
+}
+
+
 @pytest.mark.parametrize("trust_inertial", ["0", "1"])
 @pytest.mark.parametrize(
 	"suite",
@@ -25,7 +35,7 @@ from cocotb_tools.runner import get_runner
 		"pause",
 		"audit",
 		"reliability",
-		"example",
+		*_EXAMPLE_MODULES,
 	],
 )
 def test_stream_simulation(tmp_path: Path, trust_inertial: str, suite: str, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -46,18 +56,20 @@ def test_stream_simulation(tmp_path: Path, trust_inertial: str, suite: str, monk
 		"pause": "pause_cases",
 		"audit": "audit_cases",
 		"reliability": "reliability_cases",
-		"example": "stream_loopback",
+		**_EXAMPLE_MODULES,
 	}[suite]
-	test_dir = tests.parent / "examples" if suite == "example" else tests
+	examples = tests.parent / "examples"
+	test_dir = examples if suite in _EXAMPLE_MODULES else tests
+	hdl_source = examples / "iq_loopback.vhd" if suite == "custom_payload" else tests / "hdl" / "stream_dut.vhd"
 	runner = get_runner("nvc")
 	runner.build(
-		sources=[tests / "hdl" / "stream_dut.vhd"],
-		hdl_toplevel="stream_dut",
+		sources=[hdl_source],
+		hdl_toplevel=hdl_source.stem,
 		build_args=["--std=2008"],
 		build_dir=tmp_path / "sim_build",
 	)
 	runner.test(
-		hdl_toplevel="stream_dut",
+		hdl_toplevel=hdl_source.stem,
 		test_module=test_module,
 		test_dir=test_dir,
 		build_dir=tmp_path / "sim_build",
@@ -65,6 +77,8 @@ def test_stream_simulation(tmp_path: Path, trust_inertial: str, suite: str, monk
 	)
 	results = ElementTree.parse(tmp_path / "results.xml").findall(".//testcase")
 	assert results, "simulator produced no test cases"
+	if suite in _EXAMPLE_MODULES:
+		assert [result.get("name") for result in results] == [test_module]
 	for result in results:
 		for status in ("failure", "error", "skipped"):
 			assert result.find(status) is None, ElementTree.tostring(result, encoding="unicode")

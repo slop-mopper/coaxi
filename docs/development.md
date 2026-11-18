@@ -13,9 +13,9 @@ uv run --locked --group docs sphinx-build -M html docs docs/_build -n -W --keep-
 uv run --locked --group docs sphinx-build -M doctest docs docs/_build -n -W --keep-going
 ```
 
-The HTML entry point is `docs/_build/html/index.html`.
-Sphinx's doctest builder checks numeric examples; the simulator suite runs
-the tutorial's source.
+Open `docs/_build/html/index.html` to preview the site. Sphinx runs the numeric
+doctests. `tests/test_simulation.py` runs the cocotb examples as well as the
+stream regressions.
 
 The simulator regression uses VHDL-2008 and both values of
 `COCOTB_TRUST_INERTIAL_WRITES`. It includes full-rate spacing, backpressure,
@@ -81,8 +81,7 @@ Do not move a published tag or attempt to replace uploaded release files.
 
 The documentation workflow builds pull requests targeting `master` and deploys
 only `master` to GitHub Pages. The site follows the current development branch.
-Publishing requires Pages to use GitHub
-Actions as its source.
+Set the GitHub Pages source to GitHub Actions.
 
 `ARCHITECTURE.md` describes the implementation, and `AGENTS.md` records
 development and writing requirements. These files and `RELEASING.md` are in

@@ -1,9 +1,7 @@
 # Lifecycle and recovery
 
-Construction binds and validates handles. Driving starts with `initialise()`.
-Await `initialise()` before sending or receiving. It clears local state and
-owned outputs, and acknowledges previous faults and cancellation.
-DUT reset is caller-controlled.
+Await `initialise()` before sending or receiving. It clears the endpoint's
+state, outputs, and previous faults. Reset the DUT separately.
 
 | Endpoint | Owned signals |
 |---|---|
@@ -14,17 +12,17 @@ Without a monitored reset pin, initialisation clears at a falling edge.
 The source clears `valid`, `last`, and bound sidebands to zero, and calls the
 payload adapter's `clear()`. `HandlePayload` clears every payload leaf to zero;
 custom adapters define their own recovery values and can raise during clearing.
-The sink clears its `ready` signal, queued transfers, and incomplete packets.
-A sink without `ready` starts continuous capture after successful
-initialisation.
+The sink clears `ready`, queued transfers, and incomplete packets. It never
+calls the adapter's `clear()`. Without `ready`, capture starts as soon as
+initialisation succeeds.
 
-Local recovery clears endpoint state. Coordinate DUT reset and peer recovery
-to empty DUT buffers and restore packet alignment during active traffic.
+If you initialise during traffic, reset or drain the DUT and coordinate with
+the peer before starting another packet.
 
 ## Reset-pin monitoring
 
-Reset monitoring is optional, independently bound, and starts with
-`initialise()`. For an active-high pin:
+To monitor an active-high reset pin, bind it when constructing the endpoint.
+Monitoring starts with `initialise()`:
 
 ```python
 source = AxiStreamSource(
@@ -46,48 +44,39 @@ and incomplete packets, and clears owned outputs at the first writable
 opportunity, including while the clock is stopped.
 If observed in `ReadOnly`, clearing is deferred by one simulator step.
 
-Release uses this interval:
+The endpoint waits through these edges after release:
 
 | Edge | Endpoint state |
 |---|---|
 | R0 | First rising edge sampling the inactive pin |
 | R1 | Following rising edge; traffic still disabled |
 | F1 | Falling edge after R1; endpoint becomes available |
-| R2 | Earliest new transfer acceptance |
+| R2 | Earliest transfer through the re-enabled endpoint |
 
 The caller must deassert reset synchronously after a rising edge.
-This conservative release interval follows Arm IHI 0051B §2.8.2, adapted to
-the chosen polarity. Reassertion restarts the interval.
+The interval follows Arm IHI 0051B §2.8.2 for the chosen polarity.
+Reasserting reset restarts the interval.
 
-A healthy endpoint resumes automatically after a pin-only interruption,
-including continuous capture. Check accepted traffic before restarting interrupted work.
-New calls during assertion or release raise `EndpointStateError`.
-Earlier faults, overflow, failed operations, and cancellation still need
-explicit `initialise()`.
-The first latched fault continues to be reported until explicit recovery or `close()`.
+A healthy endpoint resumes after release, including capture without `ready`.
+Calls during assertion or release raise `EndpointStateError`. The endpoint
+keeps reporting a previous fault until `initialise()` or `close()`.
 
-Initialisation waits through assertion and release. It can wait indefinitely
-if reset stays asserted or the clock stops. Cancelled initialisation leaves
-monitoring active for output safety, but a later successful initialisation is
-needed before traffic can resume.
+`initialise()` waits through the release interval even if the pin is already
+inactive. It can wait indefinitely if reset stays asserted or the clock stops.
+Cancelling it leaves reset monitoring active to clear outputs on assertion.
+Call `initialise()` again before starting traffic. See
+[Interrupt a stalled send with reset](examples/reset-recovery.md).
 
 ## Errors and cancellation
 
-Preflight errors leave the endpoint usable. Examples include missing `last` for
-a frame operation, an invalid single-send metadata value, an empty frame,
-a metadata-sequence length mismatch, or an invalid frame-length limit.
+Argument checks before a transfer leave the endpoint usable. If an operation
+fails after it starts, or you cancel it, call `initialise()` before starting
+another. On cancellation, the outputs keep their driven values until
+initialisation, `close()`, or reset assertion clears them.
 
-In-progress conversion, protocol, metadata, capture, frame-length, or pause iterator faults,
-and caller cancellation require `initialise()`. A healthy pin-only reset
-interrupts work with `TransferReset` and resumes automatically after release.
-Explicit initialisation performs its own recovery; interruption by `close()` leaves
-the endpoint stopped until it is initialised again.
-Cancellation leaves driven outputs for explicit cleanup unless pin monitoring
-subsequently clears them.
-
-A transfer can be accepted at a rising edge before interruption prevents the
-call from returning at its cleanup edge. Blindly retrying can duplicate traffic.
-Use a scoreboard or DUT-level recovery to determine what happened.
+Check what the peer accepted before retrying. An operation can be interrupted
+after acceptance and before it returns. Use a scoreboard or reset both ends
+to avoid sending a transfer twice.
 
 Initialisation, pin assertion, and `close()` interrupt active operations with
 {py:class}`coaxi.TransferReset`. An invalid reset or recorded fault can instead
@@ -131,7 +120,6 @@ Repeated closes are safe.
 
 A failed or cancelled close leaves the endpoint closed, but output cleanup may
 be incomplete. Explicit `initialise()` starts it again.
-Run initialisation and `close()` sequentially.
 
-Routine transfer, framing, initialisation, and reset activity is logged at
-DEBUG level through `coaxi.stream`.
+Enable `DEBUG` on `coaxi.stream` to log transfers, framing, initialisation,
+and reset.

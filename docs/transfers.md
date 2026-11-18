@@ -8,14 +8,14 @@ A source drives at a falling edge and holds `data`, `last`, and sidebands
 stable until acceptance. A sink asserts `ready` at a falling edge.
 Reception samples at the accepting rising edge before clocked HDL updates.
 
-Live single-transfer operations return at the following falling edge.
-A send schedules `valid` and bound `last` low; a receive schedules `ready` low.
-Payload and other sidebands keep their values after a successful send.
-Initialisation and `close()` clear them.
+A live `send()` or `recv()` returns at the falling edge after acceptance.
+The source schedules `valid` and bound `last` low; the sink schedules `ready`
+low, when present. Payload and other sidebands keep their values until the
+next send or until the source clears its outputs.
 
-Immediately consecutive calls can share the cleanup edge and sustain one
-accepted transfer per rising edge. For an unframed source with a receiving
-peer already running:
+A call made immediately on that edge can drive the next transfer. With a
+receiver ready on every cycle, consecutive calls can transfer one beat per
+rising edge:
 
 ```python
 await source.send(10)
@@ -25,9 +25,8 @@ await source.send(30)
 
 `valid` and `ready` can stay high between calls. Waiting for another
 simulator phase or advancing time between calls can insert idle cycles.
-The same full-rate behaviour applies within frames, between consecutive frames,
-and when mixing single-transfer and frame calls. Backpressure delays acceptance
-until the peer is ready.
+This also applies within frames, between frames, and when mixing
+single-transfer and frame calls.
 
 Only one send or receive operation may be active on an endpoint. A frame
 owns its endpoint until the whole operation completes. Separate source and
@@ -45,26 +44,10 @@ transmission, or {py:meth}`~coaxi.AxiStreamSink.set_pause_generator` to hold
 waiting for `ready` keeps `valid`, `data`, and sidebands stable until acceptance.
 A sink without `ready` cannot stall its peer.
 
-```python
-from collections.abc import Iterator
-
-
-def source_pauses() -> Iterator[bool]:
-	while True:
-		yield False
-		yield False
-		yield True
-
-
-source.set_pause_generator(source_pauses())
-sink.set_pause_generator([False, True])
-```
-
-Each initialised endpoint takes one value in `ReadOnly` after every rising
-edge for use at the following falling edge, including when idle. Install a
-pattern before a rising edge to use its first value for the next drive.
-A generator can inspect settled signals at that point; leave writes to the
-endpoint.
+An initialised endpoint reads one pause value in `ReadOnly` after every
+rising edge, including when idle. This value controls the next falling-edge
+drive. A generator can read settled signals at that point. Leave writes to
+the endpoint.
 
 A list or other sequence repeats from a copy. A generator or other non-sequence
 iterable is read once, without caching; it unpauses the endpoint on the cycle
@@ -76,7 +59,8 @@ Call `set_pause_generator(None)` to stop a pattern and allow traffic at the
 next drive. Reset suspends sampling, and the pattern resumes from the same
 position after release. Reinitialisation also keeps that position. `close()`
 discards the pattern. Use a simulation-time timeout for tests with intentional
-stalls.
+stalls. See [Source gaps and sink backpressure](examples/backpressure.md)
+for a test with both patterns.
 
 ## Unframed and framed streams
 
@@ -101,21 +85,20 @@ await sending
 
 A source frame is a non-empty sequence of payloads.
 Each received {py:class}`coaxi.AxiStreamTransfer` includes the sampled `last`
-value. Frame reception starts with the next available transfer.
-Starting midway through a packet can produce a suffix.
+value. If reception starts part-way through a packet, it can return only
+the remaining transfers.
 
 Use simulation-time timeouts for stalled traffic. By default, frame reception
 allows any packet length. Memory usage grows with unfinished packets.
 A packet ending at its configured limit succeeds; one reaching that length
 with `last` low raises `ValueError` after cleanup and requires `initialise()`.
-Recovery must account for the accepted prefix and the rest of the packet.
+Check what the peer has already sent before restarting reception.
 
 ## Interleaved packets
 
-Frame reception assembles a separate incomplete packet for each effective
-`(id, dest)` pair. Missing identifiers have effective value zero.
-Transfers within a packet stay in wire order; packets are delivered in
-completion order.
+One packet per `(id, dest)` pair can be in progress. An unbound `id` or
+`dest` counts as zero. `recv_frame()` returns whichever packet finishes first,
+with its transfers in wire order.
 
 | Wire order | Frame returned |
 |---|---|
@@ -126,9 +109,10 @@ Unfinished packets from other identities remain available for later frame
 calls. Packet assembly requires literal binary `id` and `dest`. Use raw `recv()`
 to inspect meta-valued identifiers.
 
-`send_frame()` keeps one constant effective identity. Use individual `send()`
-calls to interleave packets. A changing or unresolved identity during a frame send
-can fail after an earlier prefix has already been transmitted.
+`send_frame()` uses one `(id, dest)` pair. Alternate packets with individual
+`send()` calls, as in [Interleaved packets](examples/interleaved.md). If the
+pair changes or becomes unresolved in `send_frame()`, the peer may already
+have accepted earlier beats when the error is raised.
 
 Raw receives deliver the next wire-order transfer and discard any unfinished
 prefix for that identity. An unresolved identity discards all unfinished prefixes.
@@ -145,17 +129,16 @@ asserted after successful initialisation, including while the caller is idle.
 Each snapshot becomes available at the following falling edge. An existing
 backlog can be received within the current simulation step.
 
-Use a finite capacity when unlimited growth is unsuitable. Capacity counts
-undelivered transfers across the queue, an accepted snapshot awaiting publication,
-a foreground receive, and unfinished packets. Delivery or explicit prefix disposal
-frees capacity.
+Capacity counts each accepted transfer until delivery or discard, including
+snapshots waiting for the falling edge and transfers in unfinished packets.
 
-Overflow stops capture and raises `OverflowError` through the current or next
-receive. Capture faults take priority over older backlog and block delivery
-until recovery. A collector fault can leave queued transfers and incomplete
-packets in memory. Initialisation, reset assertion, `close()`, or an in-progress
-foreground failure or cancellation discards that state. Preflight rejection
-leaves capture and queued traffic unchanged.
+Overflow stops capture. The current or next receive raises `OverflowError`
+before returning any queued transfer. Other capture errors also stop delivery.
+A background capture error can leave queued transfers and unfinished packets
+in memory. Initialisation, reset assertion, `close()`, or failure or cancellation
+during a receive discards them. An argument error before a receive starts
+leaves capture and the queue unchanged.
 
-Physical traffic continues while capture is stopped. Successful initialisation
-starts capture; healthy pin-reset recovery restarts it automatically.
+The sender can keep transmitting while capture is stopped. Call
+`initialise()` to restart capture after a fault. After a pin-only reset, a
+healthy sink restarts capture on release. See [Capture without `ready`](examples/no-ready.md).

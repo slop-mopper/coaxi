@@ -1,9 +1,8 @@
 # Numeric values
 
 {py:class}`coaxi.Signed` and {py:class}`coaxi.Unsigned` model VHDL-2008
-`ieee.numeric_std` integer vectors. Values contain a width, index range, and
-logic states. Arithmetic follows the package's result-width rules and wraps
-when the result exceeds that width.
+`ieee.numeric_std` integer vectors. Arithmetic uses VHDL result widths and
+wraps when a result does not fit.
 
 ## Construction and conversion
 
@@ -26,10 +25,11 @@ OverflowError: 256 does not fit Unsigned with width 8
 
 Constructors accept `LogicArray`, `Signed`, or `Unsigned`, copying all bits
 and the input range. Non-null indices must be non-negative, following the
-package's `natural` index subtype. Conversion between signedness reinterprets the bits.
-Use `from_int()` for Python integers; positive widths are checked.
-Unsigned input integers must be non-negative. Width-zero conversion returns
-a null vector, following VHDL, even when the input integer is nonzero.
+package's `natural` index subtype. Changing signedness reinterprets the bits.
+Use `from_int()` for Python integers. At positive widths it raises
+`OverflowError` if the integer does not fit. At width zero it returns a null
+vector, even for a nonzero integer. `Unsigned.from_int()` rejects negative
+integers at any width.
 
 `from_int()` accepts `False` as zero and `True` as one, with the usual range
 checks. Widths and shift/rotation counts require integers other than booleans;
@@ -47,14 +47,12 @@ TypeError: expected a Python integer, not bool
 
 `to_int()` and `int(x)` interpret weak `L` and `H` numerically and raise
 `ValueError` for other meta-values. A null vector warns and converts to zero.
-Python integer conversions support arbitrary precision. Conversion of a
-resolved, non-null value produces no warnings. The VHDL package body can warn
-while converting a one-bit signed `-1` through an internal scalar addition;
-Python conversion returns `-1` without that intermediate operation.
+Resolved non-null vectors convert without warnings or a width limit.
 
 `to_logic_array()` returns a separate mutable array. Mutating an input or
 exported array does not change the numeric value. Use the exported array when
-driving cocotb handles or the default coaxi payload adapter:
+driving cocotb handles or the default coaxi payload adapter. Here an 8-bit
+`sample` times an 8-bit coefficient produces a 16-bit `result`:
 
 ```python
 sample = Signed(dut.sample.value)
@@ -65,7 +63,7 @@ await source.send(sample.to_logic_array())
 
 ## Widths and integer overloads
 
-For same-type vector operands of widths `L` and `R`:
+For non-null operands of the same type, with widths `L` and `R`:
 
 | Operation | Result width |
 |---|---:|
@@ -92,16 +90,16 @@ before they can be combined.
 ```
 
 `+`, `-`, and `*` convert an integer operand to the vector's width first.
-That input conversion raises `OverflowError` if it cannot fit, in either
-operand order. Multiplication then produces twice the vector width.
-VHDL permits truncating these input conversions with a warning; coaxi's
-checked-conversion policy deliberately raises instead.
+If the integer does not fit, the operation raises `OverflowError` before
+calculating, in either operand order. VHDL can truncate that input with a
+warning. Arithmetic results can still wrap. Multiplication produces twice
+the vector width.
 
 Division, remainder, and modulus use different scalar implementations, with
 wider temporaries where required. They return the vector's width and can warn
-when narrowing an arithmetic result. Ordinary integer comparisons compare
-out-of-range integers numerically, without a truncating input conversion.
-Matching comparisons convert an integer at the vector's width.
+when narrowing an arithmetic result. Ordinary comparisons use the integer's
+full value, though `Unsigned` rejects negative integers. Matching comparisons
+convert the integer at the vector's width.
 
 Scalar/vector operand order is supported for Python operators:
 
@@ -119,9 +117,8 @@ Division truncates towards zero. A nonzero `rem` follows the dividend's sign;
 a nonzero `mod` follows the divisor's sign. `/` returns a numeric vector.
 `//` and exponentiation are unsupported.
 
-VHDL's scalar division has a shortcut: a divisor needing more bits than the
-vector produces zero before vector division. Package compatibility includes
-that result:
+In `vector / int`, a divisor that needs more bits than the vector produces
+zero before vector division:
 
 ```{doctest}
 >>> minimum = Signed.from_int(-8, width=4)
@@ -206,9 +203,8 @@ follow each package operation's early-return or failure path.
 
 ## Operator signatures
 
-`Self` means the numeric type of the left vector operand. The signatures
-below apply to both types, except unary negation and absolute value,
-which apply to `Signed`.
+`Self` is the type of the vector whose method is called. Unary negation and
+absolute value apply only to `Signed`.
 
 ```python
 def __add__(other: Self | int | Logic) -> Self: ...
@@ -281,16 +277,6 @@ Properties are read-only:
 | `range` | `Range` | Independent cocotb range, including direction. |
 | `is_resolvable` | `bool` | All bits are `0`, `1`, `L`, or `H`. |
 
-The types supply no `__index__` conversion. Use `to_int()` explicitly where
-a Python index is required. Fixed-point formats, rounding, and saturation
-remain outside these integer types.
-
-## Validation
-
-The regression compares Python values against NVC's VHDL-2008 package with C
-intrinsics both enabled and disabled. It checks bits, ranges, results, and
-warning presence. Two null-range differences in NVC 1.21.1 are handled
-explicitly in the oracle tests: its C `resize` intrinsic returns `-1 downto 0`
-at zero width, and concatenating two null vectors produces `0 to -1`.
-coaxi follows the IEEE package's `0 downto 1` resize result and the language
-rule that two null operands yield the right operand's range.
+Use `to_int()` where Python requires an integer index. See
+[Calculate an expected HDL result](examples/arithmetic.md) for multiplication,
+signed resize, and counter wrap.

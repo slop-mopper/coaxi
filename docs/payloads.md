@@ -1,34 +1,30 @@
 # Payloads and conversion
 
-The default adapter, {py:class}`coaxi.HandlePayload`, supports scalar logic,
-logic vectors, and named containers such as VHDL records. Received values
-use cocotb logic types and field mappings. Adapters provide payload access;
-endpoints handle handshakes and framing.
+{py:class}`coaxi.HandlePayload` is the default adapter. It reads scalar signals
+as `Logic`, vectors as `LogicArray`, and records as dictionaries keyed by
+field name.
 
 ## Vectors and records
 
-Unsigned integers can be sent directly. On a 16-bit unframed vector bus,
-signed values use an explicit two's-complement vector:
+For an unframed vector bus, send a non-negative integer that fits the signal.
+For a negative value, supply its two's-complement bits:
 
 ```python
 from cocotb.types import LogicArray
 
-await source.send(42)  # Unframed, data-bearing bus.
+await source.send(42)
 await source.send(LogicArray.from_signed(-12, 16))
 ```
 
-Record values use mappings whose keys match all HDL field names.
-Nested records use nested mappings.
-For this VHDL record:
+Each mapping key must match an HDL field name. Use nested mappings for nested
+records. For the following VHDL record, pass a mapping with `i` and `q`:
 
-```{literalinclude} ../tests/hdl/stream_dut.vhd
+```{literalinclude} ../examples/iq_loopback.vhd
 :language: vhdl
-:start-at: type IQ_t is record
+:start-at: type iq_t is record
 :end-at: end record;
 :dedent: 1
 ```
-
-a source bound to a framed IQ-record bus can send:
 
 ```python
 samples = [
@@ -38,24 +34,16 @@ samples = [
 await source.send_frame(samples)
 ```
 
-Received scalars are `Logic`, vectors are `LogicArray`, and containers are
-new dictionaries of field snapshots. The default adapter validates the whole
-payload before writing any leaf. Integer inputs must be unsigned and fit the
-HDL width; unsupported leaf types fail when the adapter is constructed.
-Errors from leaf conversion include the HDL path.
-
-Keep payload values and contained logic arrays unchanged while a send is active.
-The source reads each frame entry as it sends it.
+`HandlePayload` checks all fields before writing any of them. It rejects
+unsupported handle types at construction and includes the HDL path in
+conversion errors. Keep the payload unchanged until the send returns;
+`send_frame()` reads each entry when it prepares that beat.
 
 ## Meta-values
 
-Payloads and raw sidebands can contain HDL meta-values for propagation and
-fault-injection tests. Snapshots include `X`, `U`, and `Z` as logic values.
-With the default adapter, source initialisation and reset assertion clear
-owned payload leaves to zero. Custom adapters define their own recovery
-values through `clear()`. The sink owns only `ready`.
-
-Numeric conversion is explicit:
+Payload and sideband snapshots keep logic values such as `X`, `U`, and `Z`.
+The integer conversion helpers treat `L` as zero and `H` as one. They reject
+unresolved bits even if `COCOTB_RESOLVE_X` is set to resolve them:
 
 ```{doctest}
 >>> from cocotb.types import LogicArray
@@ -71,15 +59,13 @@ Traceback (most recent call last):
 ValueError: cannot convert unresolved payload 00X1 to an integer
 ```
 
-The numeric helpers reject unresolved values even when `COCOTB_RESOLVE_X`
-would allow cocotb to resolve them. Weak `L` and `H` are resolvable for numeric
-conversion. Sampled handshake controls, accepted `last`, and monitored reset
-require literal `0` or `1`; weak values also fail there.
+Sampled handshake controls, accepted `last`, and monitored reset require
+literal `0` or `1`.
 
 ## Numeric values
 
-{py:class}`coaxi.Signed` and {py:class}`coaxi.Unsigned` provide VHDL-width
-arithmetic on snapshots. Convert explicitly when using the default payload adapter:
+{py:class}`coaxi.Signed` and {py:class}`coaxi.Unsigned` use VHDL width rules.
+Export a `LogicArray` before passing either type to the default adapter:
 
 ```python
 from coaxi import Signed
@@ -88,26 +74,12 @@ sample = Signed.from_int(-12, width=16)
 await source.send(sample.to_logic_array())
 ```
 
-Received vectors can be interpreted with `Signed(transfer.data)` when the
-payload is a `LogicArray`. Numeric construction copies the snapshot.
-See [Numeric values](numeric.md) for integer overloads, wraparound, and meta-values.
+To interpret a received `LogicArray` as signed, use `Signed(transfer.data)`.
+See [Numeric values](numeric.md) for widths and operators.
 
 ## Application-defined types
 
-Implement {py:class}`coaxi.Payload` to use an application value type. The
-adapter binds its own handles and provides synchronous `drive()`, `read()`,
-and `clear()` methods. Each method must complete synchronously. Reads must
-produce independent snapshots, and clearing must define every owned payload leaf.
-
-Supply the adapter through the endpoint constructor. With `Payload[T]`,
-the source accepts `T` and the sink produces `AxiStreamTransfer[T]`.
-Without an adapter, endpoint typing is `PayloadValue | None`; `None` is only
-accepted on a data-less bus. A data-less bus rejects custom adapters.
-
-Validate before writing where possible. A custom adapter can partially
-write before raising; coordinate recovery with the peer.
-The sink accesses incoming payloads through `read()`.
-
-With `data` present, `keep` and `strb` require a byte-aligned logic-vector handle.
-See [Byte lanes](sidebands.md#byte-lanes) for the lane layout and data-less buses.
-`last`, `user`, `id`, and `dest` support any payload shape.
+Use a {py:class}`coaxi.Payload` adapter when the testbench works with a Python
+type such as a dataclass. Each adapter needs a bound `data` signal.
+[IQ samples as a dataclass](examples/custom-payload.md) includes the VHDL,
+bus bindings, and a test that sends and receives a frame.

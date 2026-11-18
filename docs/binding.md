@@ -1,8 +1,8 @@
 # Signal binding
 
-{py:class}`coaxi.AxiStreamBus` associates protocol roles with HDL handles.
-Each role accepts an independent name or handle. Names can have different
-case or contain punctuation supported by cocotb.
+{py:meth}`coaxi.AxiStreamBus.bind` accepts a child name or a cocotb handle
+for each signal. It looks up explicit names as supplied, including case
+and punctuation.
 
 ## Naming defaults and overrides
 
@@ -20,7 +20,7 @@ bus = AxiStreamBus.bind(dut, prefix="output", t_prefix=False)
 # output_data, output_valid, output_ready; no optional signals
 ```
 
-Each role can override its generated name independently:
+Override individual signals and use generated names for the rest:
 
 ```python
 bus = AxiStreamBus.bind(
@@ -32,10 +32,7 @@ bus = AxiStreamBus.bind(
 )
 ```
 
-The other roles still use their defaults. Explicit names are looked up
-unchanged as children of the binding entity.
-
-Handles can be supplied directly:
+If all signals are handles, omit the entity:
 
 ```python
 bus = AxiStreamBus.bind(
@@ -47,14 +44,12 @@ bus = AxiStreamBus.bind(
 source = AxiStreamSource(bus, clock=dut.beat_clock)
 ```
 
-Direct construction with handles is also supported. Use `clock` and `reset`
-handles with a directly constructed bus; name lookup normally uses the entity
-supplied to `bind()`.
+When binding without an entity, pass `clock` and `reset` as handles too.
 
 ## Optional signals
 
-`data`, `valid`, and `ready` have generated defaults enabled initially.
-Select `last`, `keep`, `strb`, `user`, `id`, and `dest` explicitly:
+`bind()` generates names for `data`, `valid`, and `ready` by default.
+Select `last`, `keep`, `strb`, `user`, `id`, and `dest` when present:
 
 ```python
 bus = AxiStreamBus.bind(dut, prefix="s", last=True, keep=True, user="tags")
@@ -66,9 +61,8 @@ bus = AxiStreamBus.bind(dut, prefix="s", last=True, keep=True, user="tags")
 bus = AxiStreamBus.bind(dut, valid="tick", data=False, ready=False)
 ```
 
-A data-less source sends `None`. Without `ready`, every rising edge
-with `valid` asserted accepts a transfer, and the sink captures continuously
-after initialisation. See [Streams without `ready`](transfers.md#streams-without-ready).
+A source without `data` sends `None`. See
+[Capture without `ready`](examples/no-ready.md) for a bus with neither signal.
 
 `None` in `bind()` requests a generated `data` or `ready` name.
 In the direct handle constructor, `None` denotes absence.
