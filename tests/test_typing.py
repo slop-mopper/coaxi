@@ -11,6 +11,22 @@ from pathlib import Path
 import pytest
 
 
+_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _check(source: Path) -> subprocess.CompletedProcess[str]:
+	# Use the checker next to the uv-managed interpreter. Source files outside
+	# the checkout need its config to discover the editable package.
+	checker = Path(sys.executable).with_name("pyrefly")
+	return subprocess.run(
+		[str(checker), "check", "--config", str(_ROOT / "pyproject.toml"), str(source)],
+		capture_output=True,
+		text=True,
+		check=False,
+		timeout=60,
+	)
+
+
 @pytest.mark.parametrize("endpoint", ["AxiStreamSource", "AxiStreamSink"])
 @pytest.mark.parametrize("scenario", ["default", "custom", "missing"])
 def test_constructor_types(tmp_path: Path, endpoint: str, scenario: str) -> None:
@@ -32,24 +48,42 @@ def test_constructor_types(tmp_path: Path, endpoint: str, scenario: str) -> None
 		f"\t{statement}\n",
 		encoding="utf-8",
 	)
-	# Use the checker installed alongside this uv-managed Python interpreter.
-	checker = Path(sys.executable).with_name("pyrefly")
-	# The temporary file is outside the project; use its unchanged project config
-	# so the checker discovers the local environment and editable package.
-	config = Path(__file__).resolve().parents[1] / "pyproject.toml"
-	result = subprocess.run(
-		[str(checker), "check", "--config", str(config), str(source)],
-		capture_output=True,
-		text=True,
-		check=False,
-		timeout=60,
-	)
+	result = _check(source)
 	output = result.stdout + result.stderr
 	if scenario == "missing":
 		assert result.returncode != 0, output
 		assert statement in output, output
 	else:
 		assert result.returncode == 0, output
+
+
+def test_custom_payload_example_types(tmp_path: Path) -> None:
+	"""Check inference and explicit IQ annotations with named clock and reset handles."""
+	example = _ROOT / "examples" / "custom_payload.py"
+	source = tmp_path / example.name
+	checks = [
+		"",
+		"",
+		"from typing import assert_type",
+		"",
+		"",
+		"def check(bus: AxiStreamBus, clock: LogicObject, reset: LogicObject) -> None:",
+		"\tadapter: Payload[IQ] = IQPayload(bus)",
+	]
+	for kind in ("Source", "Sink"):
+		endpoint = f"AxiStream{kind}"
+		args = "bus, clock=clock, reset=reset, reset_active_high=True, payload=IQPayload(bus)"
+		checks.extend(
+			[
+				f"\t{kind.lower()} = {endpoint}({args})",
+				f"\tassert_type({kind.lower()}, {endpoint}[IQ])",
+				f"\ttyped_{kind.lower()}: {endpoint}[IQ] = {endpoint}[IQ]({args})",
+				f"\tassert_type(typed_{kind.lower()}, {endpoint}[IQ])",
+			]
+		)
+	source.write_text(example.read_text(encoding="utf-8") + "\n".join(checks) + "\n", encoding="utf-8")
+	result = _check(source)
+	assert result.returncode == 0, result.stdout + result.stderr
 
 
 @pytest.mark.parametrize("scenario", ["default", "custom", "wrong_input"])
@@ -82,15 +116,7 @@ def test_frame_types(tmp_path: Path, scenario: str) -> None:
 		"\tassert_type(await sink.close(), None)\n",
 		encoding="utf-8",
 	)
-	checker = Path(sys.executable).with_name("pyrefly")
-	config = Path(__file__).resolve().parents[1] / "pyproject.toml"
-	result = subprocess.run(
-		[str(checker), "check", "--config", str(config), str(source)],
-		capture_output=True,
-		text=True,
-		check=False,
-		timeout=60,
-	)
+	result = _check(source)
 	output = result.stdout + result.stderr
 	if scenario == "wrong_input":
 		assert result.returncode != 0 and "send_frame" in output, output

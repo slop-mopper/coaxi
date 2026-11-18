@@ -22,6 +22,16 @@ either field. `read()` builds a new `IQ` and raises `ValueError` on unresolved
 bits. The source uses `clear()` to write zeros during initialisation and
 cleanup; the sink never writes the record.
 
+`AxiStreamSource[IQ]` and `AxiStreamSink[IQ]` take the value type `IQ`.
+Pass an `IQPayload` instance as `payload`. If you annotate an endpoint
+attribute, include `[IQ]` there too: a bare `AxiStreamSource` or
+`AxiStreamSink` in an annotation means `PayloadValue | None`.
+
+If the checker rejects the constructor, try `adapter: Payload[IQ] = IQPayload(input_bus)`
+to check the adapter on its own. Use `drive(self, value: IQ) -> None` and
+`read(self) -> IQ`: a different parameter name in `drive()`, such as
+`sample`, changes which keywords the method accepts.
+
 ```{literalinclude} ../../examples/custom_payload.py
 :language: python
 :lines: 7-

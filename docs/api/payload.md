@@ -9,6 +9,9 @@
 Adapter for an application payload type `T`. Bind the data handles in the
 adapter and pass it to the endpoint's `payload` parameter. An adapter can
 inherit from `Payload[T]` or implement its methods without inheritance.
+Use the signature `drive(self, value: T) -> None` and return `T` from
+`read()`. A type checker checks the `value` keyword as well as its type,
+even when the endpoint calls `drive()` positionally.
 
 The source calls `drive()` and `clear()`; the sink calls `read()`. These
 methods must be synchronous. Validate all fields before writing any of them

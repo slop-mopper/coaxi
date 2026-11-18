@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import cocotb
 from cocotb.clock import Clock
 from cocotb.types import LogicArray
-from cocotb.handle import HierarchyObject, LogicArrayObject
+from cocotb.handle import HierarchyObject, LogicArrayObject, LogicObject
 
 from coaxi import AxiStreamBus, AxiStreamSink, AxiStreamSource, Payload, to_signed
 
@@ -47,11 +47,13 @@ class IQPayload(Payload[IQ]):
 
 @cocotb.test(timeout_time=1000, timeout_unit="ns")
 async def custom_payload(dut: HierarchyObject) -> None:
-	cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start(start_high=False))
+	clock = dut.clk
+	assert isinstance(clock, LogicObject)
+	cocotb.start_soon(Clock(clock, 10, unit="ns").start(start_high=False))
 	input_bus = AxiStreamBus.bind(dut, prefix="s", last=True)
 	output_bus = AxiStreamBus.bind(dut, prefix="m", last=True)
-	source = AxiStreamSource(input_bus, dut.clk, payload=IQPayload(input_bus))
-	sink = AxiStreamSink(output_bus, dut.clk, payload=IQPayload(output_bus))
+	source = AxiStreamSource[IQ](input_bus, clock=clock, payload=IQPayload(input_bus))
+	sink = AxiStreamSink[IQ](output_bus, clock=clock, payload=IQPayload(output_bus))
 	await source.initialise()
 	await sink.initialise()
 
