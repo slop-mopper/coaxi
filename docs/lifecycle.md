@@ -77,7 +77,7 @@ Preflight errors leave the endpoint usable. Examples include missing `last` for
 a frame operation, an invalid single-send metadata value, an empty frame,
 a metadata-sequence length mismatch, or an invalid frame-length limit.
 
-In-progress conversion, protocol, metadata, capture, or frame-length faults,
+In-progress conversion, protocol, metadata, capture, frame-length, or pause iterator faults,
 and caller cancellation require `initialise()`. A healthy pin-only reset
 interrupts work with `TransferReset` and resumes automatically after release.
 Explicit initialisation performs its own recovery; interruption by `close()` leaves
@@ -123,9 +123,10 @@ See [Errors](api/index.md#errors) for the remaining exception contracts.
 
 ## Closing
 
-`close()` stops reset monitoring and capture, discards queued state and faults,
-and invalidates active operations. A source or sink with `ready` clears its
-outputs at a falling edge. A sink without `ready` closes immediately.
+`close()` stops reset monitoring, capture, and pause sampling. It discards
+queued state, faults, and the pause pattern, and invalidates active operations.
+A source or sink with `ready` clears its outputs at a falling edge.
+A sink without `ready` closes immediately.
 Repeated closes are safe.
 
 A failed or cancelled close leaves the endpoint closed, but output cleanup may

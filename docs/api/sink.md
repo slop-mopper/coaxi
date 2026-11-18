@@ -45,6 +45,24 @@ starts continuous capture, including while the caller is idle.
 See [Streams without `ready`](../transfers.md#streams-without-ready) for capacity
 accounting and overflow.
 
+## set_pause_generator
+
+```{py:method} AxiStreamSink.set_pause_generator(pattern: Iterable[bool | int] | None = None) -> None
+
+:Parameters:
+  - `pattern: Iterable[bool | int] | None`
+
+    `True` or `1` pauses; `False` or `0` allows reception. A sequence is copied and repeated. Other iterables are consumed once. An empty sequence or `None` disables pausing.
+
+:returns: `None`.
+:raises TypeError: The pattern is neither iterable nor `None`.
+:raises ValueError: `ready` is absent and the pattern is not `None`, or a sequence contains an invalid value.
+```
+
+A pause holds `ready` low during pending receives. A sink requires `ready` to
+stall the sender. See [Simulated backpressure](../transfers.md#simulated-backpressure)
+for clock timing, exhaustion, and iteration errors.
+
 ## recv
 
 ```{py:method} AxiStreamSink.recv() -> AxiStreamTransfer[T]
@@ -65,8 +83,9 @@ available at the following falling edge.
 
 Raw reception discards the unfinished packet prefix for that transfer's
 identity. An unresolved identity discards all unfinished prefixes.
-Payload and sideband meta-values stay raw; `valid` and accepted `last` must be
-literal `0` or `1`. Capture faults are reported before older backlog.
+Payload and sideband meta-values stay raw. The sink samples `valid` when
+`ready` is high or absent. Sampled `valid` and accepted `last` must be literal
+`0` or `1`. Capture faults are reported before older backlog.
 
 ## recv_frame
 

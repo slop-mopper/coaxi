@@ -18,7 +18,7 @@ from types import UnionType
 from functools import reduce
 from operator import or_
 from typing import Any, Self, TypeAliasType, get_args, get_origin, get_type_hints
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 
 import coaxi
 import pytest
@@ -55,6 +55,7 @@ def _reference_namespace(owner: Any) -> dict[str, Any]:
 	namespace = {
 		**vars(coaxi),
 		"Self": Self,
+		"Iterable": Iterable,
 		"Sequence": Sequence,
 		"Mapping": Mapping,
 		"Logic": Logic,

@@ -17,8 +17,7 @@ myst_enable_extensions = ["fieldlist"]
 python_maximum_signature_line_length = 88
 python_trailing_comma_in_multi_line_signatures = True
 
-# External cocotb types are linked on the API index. Keep offline builds usable;
-# unresolved coaxi references must still fail the nitpicky build.
+# Keep external types usable in offline builds while checking coaxi references.
 nitpick_ignore = [
 	("py:class", name)
 	for name in (
@@ -29,6 +28,7 @@ nitpick_ignore = [
 		"Logic",
 		"LogicArray",
 		"Range",
+		"Iterable",
 		"Self",
 		"T",
 	)

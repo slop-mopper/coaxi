@@ -113,6 +113,17 @@ neither coverage nor mutation counts act as acceptance thresholds.
   Cleanup writes can be superseded on the same edge; valid/ready need not pulse
   low between calls. Initial calls still wait for a fresh falling edge.
 
+`set_pause_generator()` configures either endpoint with a copied, repeating
+sequence or a one-pass iterable. A clock task samples once per rising edge
+in `ReadOnly`, including while idle. The following falling edge uses that
+sample to gate a new source offer or the sink's `ready`. The source holds any
+outstanding offer stable even when a new sample pauses it. Ready-backed
+reception uses the `ready` decision for that cycle before sampling `valid`;
+capture without `ready` cannot pause. Replacement, exhaustion, or clearing
+unpauses the endpoint. Reset and reinitialisation stop the task without losing
+the iterator position; closing or iterator failure discards it. Task identity
+guards against stale callbacks, and iterator errors use the endpoint fault latch.
+
 `send_frame(Sequence[T], *, sidebands=None)` requires non-empty input and bound
 last, generating last only on the final transfer. Optional metadata is a matching
 sequence of `AxiStreamSidebands`. Values remain caller-owned until completion;
@@ -415,6 +426,10 @@ There is no public API or protocol implementation change in this test layer.
   a rising-edge sample or before falling-edge publication, for both polarities.
   Held-reset/stopped-clock checks require prompt interruption, complete retention
   disposal and automatic capture recovery without replaying pre-reset traffic.
+- `tests/pause_cases.py` checks repeating and one-pass patterns at individual
+  clock edges, idle sampling, stable stalled offers, ready gating, and concurrent
+  pauses through the registered DUT. It covers reset, replacement, exhaustion,
+  close, no-ready buses, and iterator errors.
 - `tests/hdl/stream_dut.vhd` is the VHDL-2008 DUT, including a registered stream
   path, a two-field signed IQ record and undriven scalar/vector-control signals.
 - `examples/stream_loopback.py` is a bounded cocotb usage example for unframed

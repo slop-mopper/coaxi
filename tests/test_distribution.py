@@ -111,6 +111,7 @@ def check_distribution(dist: Path, tmp_path: Path) -> None:
 			"tests/sideband_cases.py",
 			"tests/omission_cases.py",
 			"tests/reset_pin_cases.py",
+			"tests/pause_cases.py",
 			"tests/audit_cases.py",
 			"tests/test_validation.py",
 			"tests/run_coverage.py",

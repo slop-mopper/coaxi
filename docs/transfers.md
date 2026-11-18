@@ -37,6 +37,47 @@ The caller must supply a clock containing literal `0` and `1`, including while
 idle and before the first initialisation. Endpoints do not monitor clock values;
 weak or unresolved clocks are unsupported.
 
+## Simulated backpressure
+
+Use {py:meth}`~coaxi.AxiStreamSource.set_pause_generator` to insert gaps in
+transmission, or {py:meth}`~coaxi.AxiStreamSink.set_pause_generator` to hold
+`ready` low during pending receives. A source pause delays new offers. A beat
+waiting for `ready` keeps `valid`, `data`, and sidebands stable until acceptance.
+A sink without `ready` cannot stall its peer.
+
+```python
+from collections.abc import Iterator
+
+
+def source_pauses() -> Iterator[bool]:
+	while True:
+		yield False
+		yield False
+		yield True
+
+
+source.set_pause_generator(source_pauses())
+sink.set_pause_generator([False, True])
+```
+
+Each initialised endpoint takes one value in `ReadOnly` after every rising
+edge for use at the following falling edge, including when idle. Install a
+pattern before a rising edge to use its first value for the next drive.
+A generator can inspect settled signals at that point; leave writes to the
+endpoint.
+
+A list or other sequence repeats from a copy. A generator or other non-sequence
+iterable is read once, without caching; it unpauses the endpoint on the cycle
+it runs out. If iteration raises or yields an invalid value, the current or
+next transfer raises the error. Call `initialise()` to recover; the failed
+pattern is discarded.
+
+Call `set_pause_generator(None)` to stop a pattern and allow traffic at the
+next drive. Reset suspends sampling, and the pattern resumes from the same
+position after release. Reinitialisation also keeps that position. `close()`
+discards the pattern. Use a simulation-time timeout for tests with intentional
+stalls.
+
 ## Unframed and framed streams
 
 Without `last`, use `send()` and `recv()`. With `last`, each individual send must

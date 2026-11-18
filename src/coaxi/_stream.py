@@ -8,7 +8,8 @@ import logging
 from typing import cast, overload
 from dataclasses import dataclass, field
 from collections import deque
-from collections.abc import Sequence
+from itertools import cycle
+from collections.abc import Iterable, Iterator, Sequence
 
 import cocotb
 from cocotb.task import Task, current_task
@@ -78,6 +79,12 @@ def _bit(handle: _Control, role: str) -> bool:
 	return value == "1"
 
 
+def _pause_bit(value: bool | int) -> bool:
+	if type(value) is bool or (type(value) is int and value in (0, 1)):
+		return bool(value)
+	raise ValueError(f"pause pattern values must be bool, 0, or 1; got {value!r}")
+
+
 @dataclass
 class _Operation:
 	interrupted: Event = field(default_factory=Event)
@@ -127,6 +134,83 @@ class _Endpoint[T]:
 		self._pin_task: Task[None] | None = None
 		self._pin_value: str | None = None
 		self._pin_ready = False
+		self._pause_pattern: Iterator[bool | int] | None = None
+		self._pause_task: Task[None] | None = None
+		self._paused = False
+
+	def set_pause_generator(self, pattern: Iterable[bool | int] | None = None) -> None:
+		"""Replace the clocked pause pattern on this endpoint.
+
+		Parameters:
+		  - `pattern: Iterable[bool | int] | None`
+
+		    `True` or `1` pauses; `False` or `0` allows the next offer or receive.
+		    Sequences are copied and repeated. Other iterables, including generators,
+		    are consumed once. An empty sequence or the default `None` disables pausing.
+
+		Returns:
+		  None.
+
+		Sample in `ReadOnly` after each rising edge for the next falling-edge drive,
+		including when idle. Replacing or exhausting a pattern unpauses the
+		endpoint. Sampling starts after initialisation and resumes from the
+		same position after reset or reinitialisation. `close()` discards the
+		pattern. A sink without `ready` cannot pause. An offered source beat
+		stays valid until accepted. Use a test timeout for patterns that can
+		keep the endpoint paused indefinitely.
+		"""
+		if pattern is not None and isinstance(self, AxiStreamSink) and self._bus.ready is None:
+			raise ValueError("a sink pause pattern requires a ready signal")
+		if isinstance(pattern, Sequence):
+			values = tuple(_pause_bit(value) for value in pattern)
+			iterator = cycle(values) if values else None
+		else:
+			iterator = None if pattern is None else iter(pattern)
+		self._stop_pause()
+		self._pause_pattern = iterator
+		self._paused = False
+		self._start_pause()
+
+	def _start_pause(self) -> None:
+		if self._initialised and self._pause_pattern is not None:
+			self._pause_task = cocotb.start_soon(self._advance_pause(self._pause_pattern))
+
+	def _stop_pause(self) -> None:
+		task, self._pause_task = self._pause_task, None
+		if task is not None and task is not current_task():
+			task.cancel()
+
+	async def _advance_pause(self, pattern: Iterator[bool | int]) -> None:
+		task = current_task()
+		try:
+			while self._pause_task is task:
+				await RisingEdge(self._clock)
+				# Sample after handshakes and settled reset for use at the next drive.
+				await ReadOnly()
+				if self._pause_task is not task:
+					return
+				self._observe_reset()
+				if self._pause_task is not task:
+					return
+				try:
+					value = next(pattern)
+				except StopIteration:
+					if self._pause_task is task:
+						self._pause_task = None
+						self._pause_pattern = None
+						self._paused = False
+					return
+				# next() runs caller code, which may replace the pattern.
+				if self._pause_task is task:
+					self._paused = _pause_bit(value)
+		except Exception as exc:
+			if self._pause_task is task:
+				self._pause_pattern = None
+				self._paused = False
+				if self._fault is None:
+					self._fault = exc
+				self._needs_initialise = True
+				self._invalidate()
 
 	def _begin(self) -> object:
 		self._observe_reset()
@@ -175,6 +259,7 @@ class _Endpoint[T]:
 
 	def _abort(self, token: object) -> None:
 		if self._active is token:
+			self._stop_pause()
 			self._active = None
 			self._initialised = False
 			self._needs_initialise = True
@@ -185,6 +270,7 @@ class _Endpoint[T]:
 		self._state_changed = Event()
 
 	def _invalidate(self) -> None:
+		self._stop_pause()
 		self._initialised = False
 		if self._active is not None:
 			if self._fault is not None:
@@ -195,7 +281,7 @@ class _Endpoint[T]:
 		self._signal_state()
 
 	def _after_initialise(self) -> None:
-		pass
+		self._start_pause()
 
 	def _clear(self) -> None:
 		raise NotImplementedError
@@ -332,9 +418,9 @@ class _Endpoint[T]:
 			self._resetting = False
 
 	async def close(self) -> None:
-		"""Stop monitoring/capture and invalidate work; initialise() explicitly reopens.
+		"""Stop monitoring, capture, and pause sampling, and invalidate work.
 
-		Discard retained traffic immediately. Clear source outputs or a sink's
+		Discard buffered traffic and the pause pattern. Clear source outputs or a sink's
 		ready at the next falling edge; a no-ready sink needs no clock edge.
 		Repeated closes are safe; overlapping initialise/close calls fail.
 		Pin changes cannot reopen a closed endpoint. Cancellation leaves the
@@ -347,6 +433,8 @@ class _Endpoint[T]:
 		self._fault = None
 		self._stop_monitor()
 		self._invalidate()
+		self._pause_pattern = None
+		self._paused = False
 		try:
 			if isinstance(self, AxiStreamSource) or self._bus.ready is not None:
 				await FallingEdge(self._clock)
@@ -512,6 +600,9 @@ class AxiStreamSource[T = PayloadValue | None](_Endpoint[T]):
 	async def _send_one(self, token: object, data: T, last: bool | None, metadata: _Values) -> None:
 		await self._start_edge()
 		self._check(token)
+		while self._paused:
+			await self._wait_edge(FallingEdge(self._clock), token)
+			self._check(token)
 		self._payload.drive(data)
 		self._sidebands.drive(metadata)
 		if self._bus.last is not None:
@@ -626,6 +717,7 @@ class AxiStreamSink[T = PayloadValue | None](_Endpoint[T]):
 		self._notify()
 
 	def _after_initialise(self) -> None:
+		super()._after_initialise()
 		if self._bus.ready is None:
 			generation = object()
 			self._capture_generation = generation
@@ -685,7 +777,8 @@ class AxiStreamSink[T = PayloadValue | None](_Endpoint[T]):
 
 		Sample data/last immediately at the rising edge, before clocked HDL
 		updates; do not wait for ReadOnly. Payload meta-values are preserved.
-		Valid and accepted last must be exactly 0 or 1 (weak L/H also fail).
+		Sample `valid` on cycles with `ready` asserted, or every cycle without
+		`ready`. Sampled `valid` and accepted `last` must be literal 0 or 1.
 		Absent last produces None. Schedule cleanup and return at the following
 		falling edge. An immediately following recv can reassert ready on that
 		same edge, without a low pulse; simulator-phase or time waits between
@@ -811,14 +904,19 @@ class AxiStreamSink[T = PayloadValue | None](_Endpoint[T]):
 					return self._queue.popleft()
 				await self._changed.wait()
 		await self._start_edge()
-		self._check(token)
-		self._bus.ready.set(1)
+		ready = None
 		while True:
+			self._check(token)
+			allow = not self._paused
+			if ready != allow:
+				self._bus.ready.set(int(allow))
+				ready = allow
 			await self._wait_edge(RisingEdge(self._clock), token)
 			self._check(token)
-			if _bit(self._bus.valid, "valid"):
+			if ready and _bit(self._bus.valid, "valid"):
 				transfer = self._read_transfer()
 				break
+			await self._wait_edge(FallingEdge(self._clock), token)
 		await self._wait_edge(FallingEdge(self._clock), token)
 		self._check(token)
 		self._bus.ready.set(0)

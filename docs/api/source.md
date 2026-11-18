@@ -39,6 +39,25 @@ Only one send operation can be active at a time. Payload and adapter errors
 propagate with their original exception types, including errors during
 initialisation or `close()`.
 
+## set_pause_generator
+
+```{py:method} AxiStreamSource.set_pause_generator(pattern: Iterable[bool | int] | None = None) -> None
+
+:Parameters:
+  - `pattern: Iterable[bool | int] | None`
+
+    `True` or `1` pauses; `False` or `0` allows a new transfer. A sequence is copied and repeated. Other iterables are consumed once. An empty sequence or `None` disables pausing.
+
+:returns: `None`.
+:raises TypeError: The pattern is neither iterable nor `None`.
+:raises ValueError: A sequence contains a value other than `True`, `False`, `1`, or `0`.
+```
+
+A pause delays the next assertion of `valid`. An offered transfer stays stable
+until accepted, even if the pattern pauses again.
+See [Simulated backpressure](../transfers.md#simulated-backpressure) for clock
+timing, exhaustion, and iteration errors.
+
 ## send
 
 ```{py:method} AxiStreamSource.send(data: T, *, last: bool | None = None, sidebands: AxiStreamSidebands | None = None) -> None
