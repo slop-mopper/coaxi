@@ -37,11 +37,13 @@ initialisation; the sink does not check clock values.
 :returns: `None`.
 ```
 
-With `ready`, the sink receives only during a call. Without `ready`, it
-captures transfers as soon as the sink becomes available, even when no
-receive is pending.
-See [Streams without `ready`](../transfers.md#streams-without-ready) for
-capacity and overflow.
+A sink with `ready` asserts it only while `recv()` or `recv_frame()` is
+pending. If the DUT can stall its input until this sink receives its output,
+[run the send and receive concurrently](../transfers.md#send-and-receive-concurrently).
+
+Without `ready`, the sink captures transfers as soon as it becomes available,
+even when no receive is pending. See [Streams without `ready`](../transfers.md#streams-without-ready)
+for capacity and overflow.
 
 ## set_pause_generator
 

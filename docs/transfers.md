@@ -72,8 +72,25 @@ await source.send(10, last=False)
 await source.send(20, last=True)
 ```
 
-Frame helpers require a bound `last` signal. Run sending and receiving concurrently
-so both endpoints can progress through backpressure:
+Frame helpers require a bound `last` signal.
+
+### Send and receive concurrently
+
+````{warning}
+Avoid this order when the DUT can stall its input until its output is read:
+
+```python
+await source.send_frame(samples)
+frame = await sink.recv_frame()
+```
+
+The sink holds output `ready` low until a receive is pending. The DUT may
+accept some input before its buffer fills and it lowers input `ready`.
+`send_frame()` then waits for the next beat to be accepted, and `recv_frame()`
+never starts.
+````
+
+Start the send as a task so the receive can run before the send completes:
 
 ```python
 import cocotb

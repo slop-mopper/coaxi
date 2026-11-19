@@ -44,7 +44,14 @@ before the first initialisation onwards; clock values are not monitored.
 `initialise()` starts driving, clearing local state and owned outputs.
 Reset the DUT separately when its state needs clearing.
 
-Start sending and receiving concurrently when the DUT can apply backpressure:
+```{warning}
+Start the receive before waiting for the send to finish. A sink with `ready`
+holds it low until a receive is pending. The DUT can accept a few input beats
+before its output backs up. If that stalls the send, the test never reaches
+the receive.
+```
+
+Start the send as a task, receive the output frame, then await the send:
 
 ```python
 import cocotb

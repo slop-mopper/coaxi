@@ -115,6 +115,10 @@ Requires `last` and asserts it on the final transfer. The effective `(id, dest)`
 stays constant and must be literal binary. Use individual `send()` calls to
 interleave packets.
 
+If the DUT can stall its input until its output is read, run the receive
+concurrently. Waiting for `send_frame()` before starting `recv_frame()` can
+deadlock. See [Send and receive concurrently](../transfers.md#send-and-receive-concurrently).
+
 Wait for the frame to finish before starting another send. The source
 checks each beat before driving it; the peer may already have accepted
 earlier beats when a later one fails. Check the peer's packet state before
