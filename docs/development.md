@@ -62,6 +62,29 @@ with an older checkout's `src/` directory to include it in the same run.
 `--profile` writes a Python profile and requires one implementation, frame
 size, write mode, and repetition. Compare wall-clock times with profiling off.
 
+### Frame loop comparison
+
+`falling-loop` and `rising-loop` are benchmark-only source and sink loops.
+They use the same vector adapter, per-beat snapshots, and deposits. Both
+start and complete each frame on falling edges. `rising-loop` skips the
+falling-edge wait after an accepted beat when the frame continues. Its next
+offer can therefore change while the clock is high. Neither loop monitors
+reset. Library endpoints keep their falling-edge drive timing.
+
+```console
+uv run --locked python tests/bench_stream.py --implementation coaxi falling-loop rising-loop \
+    --beats 32768 --frame-size 1 256 --repeat 5
+uv run --locked python tests/bench_stream.py --implementation coaxi falling-loop rising-loop \
+    --beats 32768 --frame-size 256 --repeat 5 --stall-period 4
+uv run --locked python tests/bench_stream.py --implementation coaxi falling-loop rising-loop \
+    --beats 64 --frame-size 1 8 --repeat 1 --stall-period 4 --check-drive-phase
+```
+
+Compare the two loops to measure the effect of skipping those waits. The
+`coaxi` result also includes endpoint work such as validating controls and
+tracking operation state. `--check-drive-phase` runs a separate HDL monitor
+and reports phase checks instead of wall-clock results.
+
 ## Reliability and coverage
 
 ```console

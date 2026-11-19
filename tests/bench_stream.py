@@ -24,8 +24,68 @@ from xml.etree import ElementTree
 import cocotb
 from cocotb.clock import Clock
 from cocotb.handle import HierarchyObject, LogicArrayObject
-from cocotb.triggers import Timer, ReadOnly, FallingEdge, with_timeout
+from cocotb.triggers import Timer, ReadOnly, RisingEdge, FallingEdge, with_timeout
 from cocotb_tools.runner import get_runner
+
+from coaxi import AxiStreamBus, AxiStreamSink, AxiStreamSource, AxiStreamTransfer, HandlePayload, PayloadValue
+
+
+_FRAME_LOOPS = ("falling-loop", "rising-loop")
+
+
+async def _send_frame(
+	bus: AxiStreamBus,
+	payload: HandlePayload,
+	data: tuple[int, ...],
+	rising: RisingEdge,
+	falling: FallingEdge,
+	*,
+	rising_interior: bool,
+) -> None:
+	"""Enter on a falling edge and make the same deposits in either loop."""
+	valid, ready, last = bus.valid, bus.ready, bus.last
+	assert ready is not None and last is not None
+	for index, word in enumerate(data, start=1):
+		final = index == len(data)
+		payload.drive(word)
+		last.set(int(final))
+		valid.set(1)
+		while True:
+			await rising
+			if str(ready.get()) == "1":
+				break
+		if final or not rising_interior:
+			await falling
+		valid.set(0)
+		last.set(0)
+
+
+async def _recv_frame(
+	bus: AxiStreamBus,
+	payload: HandlePayload,
+	rising: RisingEdge,
+	falling: FallingEdge,
+	*,
+	rising_interior: bool,
+) -> list[AxiStreamTransfer[PayloadValue | None]]:
+	"""Enter and return on falling edges, capturing the same snapshots in either loop."""
+	valid, ready, last = bus.valid, bus.ready, bus.last
+	assert ready is not None and last is not None
+	packet: list[AxiStreamTransfer[PayloadValue | None]] = []
+	while True:
+		ready.set(1)
+		while True:
+			await rising
+			if str(valid.get()) == "1":
+				break
+			await falling
+		final = str(last.get()) == "1"
+		packet.append(AxiStreamTransfer(payload.read(), final))
+		if final or not rising_interior:
+			await falling
+		ready.set(0)
+		if final:
+			return packet
 
 
 def _codec(width: int) -> Struct | None:
@@ -37,7 +97,9 @@ def _codec(width: int) -> Struct | None:
 async def stream_throughput(dut: HierarchyObject) -> None:
 	"""Verify all payloads, frame lengths, hardware counts, and handshake spacing."""
 	implementation = os.environ["BENCH_IMPLEMENTATION"]
-	using_coaxi = implementation not in ("legacy", "legacy-word")
+	frame_loop = implementation in _FRAME_LOOPS
+	rising_interior = implementation == "rising-loop"
+	using_coaxi = not frame_loop and implementation not in ("legacy", "legacy-word")
 	beats = int(os.environ["BENCH_BEATS"])
 	frame_size = int(os.environ["BENCH_FRAME_SIZE"])
 	reset_pin = os.environ["BENCH_RESET"] == "1"
@@ -54,8 +116,17 @@ async def stream_throughput(dut: HierarchyObject) -> None:
 	cocotb.start_soon(Clock(clock, 10, unit="ns", impl="gpi").start(start_high=False))
 	reset = dut.reset if reset_pin else None
 	dut.reset.value = int(reset_pin)
-	if using_coaxi:
-		from coaxi import AxiStreamBus, AxiStreamSink, AxiStreamSource, AxiStreamTransfer, HandlePayload, PayloadValue
+	if frame_loop:
+		assert not reset_pin
+		source_bus = AxiStreamBus.bind(dut, prefix="s", last=True)
+		sink_bus = AxiStreamBus.bind(dut, prefix="m", last=True)
+		assert source_bus.data is not None and sink_bus.data is not None
+		source_payload, sink_payload = HandlePayload(source_bus.data), HandlePayload(sink_bus.data)
+		rising, falling = RisingEdge(clock), FallingEdge(clock)
+		# Match the two sequential endpoint initialisations before coaxi timing.
+		await falling
+		await falling
+	elif using_coaxi:
 
 		class DirectIntegerDrive(HandlePayload):
 			"""Benchmark-only adapter for the generated, in-range integer input."""
@@ -116,7 +187,12 @@ async def stream_throughput(dut: HierarchyObject) -> None:
 		)
 
 	async def produce() -> None:
-		if using_coaxi:
+		if frame_loop:
+			# First calls wait for a fresh edge; subsequent frames reuse cleanup.
+			await falling
+			for data in payloads:
+				await _send_frame(source_bus, source_payload, data, rising, falling, rising_interior=rising_interior)
+		elif using_coaxi:
 			for data in payloads:
 				await source.send_frame(data)
 		else:
@@ -125,7 +201,12 @@ async def stream_throughput(dut: HierarchyObject) -> None:
 			await tx.wait()
 
 	async def consume() -> None:
-		if using_coaxi:
+		if frame_loop:
+			await falling
+			for _ in range(frame_count):
+				packet = await _recv_frame(sink_bus, sink_payload, rising, falling, rising_interior=rising_interior)
+				received.append(decode_coaxi(packet))
+		elif using_coaxi:
 			for _ in range(frame_count):
 				packet = await sink.recv_frame(max_transfers=frame_size)
 				if implementation == "deferred":
@@ -164,6 +245,15 @@ async def stream_throughput(dut: HierarchyObject) -> None:
 	# An input stall on cycle n causes an output bubble on cycle n + 1.
 	bubbles = (last - 1) // stall_period - (first - 2) // stall_period if stall_period else 0
 	assert cycles == beats + bubbles, f"{beats} transfers, {bubbles} expected stalls, {cycles} cycles"
+	if os.environ["BENCH_CHECK_DRIVE_PHASE"] == "1":
+		assert str(dut.first_offer_high.value) == "0", "the first offer must be on a falling edge"
+		assert str(dut.last_clear_high.value) == "0", "the final valid clear must be on a falling edge"
+		assert str(dut.first_ready_high.value) == "0", "the first ready assertion must be on a falling edge"
+		assert str(dut.last_ready_clear_high.value) == "0", "the final ready clear must be on a falling edge"
+		assert str(dut.s_tvalid.value) == str(dut.s_tlast.value) == str(dut.m_tready.value) == "0"
+		rising_drives = int(dut.rising_drives.value)
+		assert (rising_drives > 0) == (rising_interior and frame_size > 1), f"{rising_drives} rising-edge drives"
+		assert int(dut.falling_drives.value) > 0, "no falling-edge drives observed"
 	if profile is not None:
 		profile.dump_stats(profile_path)
 	Path(os.environ["BENCH_RESULT"]).write_text(json.dumps({"seconds": elapsed, "cycles": cycles}), encoding="utf-8")
@@ -182,13 +272,14 @@ def _main() -> None:
 	parser.add_argument("--stall-period", type=int, default=0, help="DUT blocks input every N cycles (0 disables)")
 	parser.add_argument(
 		"--implementation",
-		choices=["coaxi", "legacy", "legacy-word", "deferred", "direct"],
+		choices=["coaxi", "legacy", "legacy-word", "deferred", "direct", *_FRAME_LOOPS],
 		nargs="+",
 		default=["coaxi", "legacy"],
 	)
 	parser.add_argument("--legacy-path", type=Path)
 	parser.add_argument("--baseline-path", type=Path, help="also measure an older checkout's src/ directory")
 	parser.add_argument("--profile", type=Path)
+	parser.add_argument("--check-drive-phase", action="store_true", help="audit drive edges instead of measuring speed")
 	args = parser.parse_args()
 	if args.beats <= 0 or args.repeat <= 0 or any(size <= 0 or args.beats % size for size in args.frame_size):
 		parser.error("use positive counts and frame sizes that divide the beat count")
@@ -197,6 +288,10 @@ def _main() -> None:
 	if args.stall_period < 0 or args.stall_period == 1:
 		parser.error("--stall-period must be zero or at least two")
 	implementations = list(dict.fromkeys(args.implementation))
+	if args.reset_pin and set(implementations).intersection(_FRAME_LOOPS):
+		parser.error("the benchmark-only frame loops do not monitor reset")
+	if args.check_drive_phase and set(implementations).intersection(("legacy", "legacy-word")):
+		parser.error("--check-drive-phase checks coaxi and the benchmark-only frame loops")
 	if args.baseline_path:
 		if not (args.baseline_path / "coaxi" / "__init__.py").is_file():
 			parser.error("--baseline-path must contain the baseline coaxi package")
@@ -236,6 +331,7 @@ def _main() -> None:
 							BENCH_RESET=str(int(args.reset_pin)),
 							BENCH_WIDTH=str(args.width),
 							BENCH_STALL_PERIOD=str(args.stall_period),
+							BENCH_CHECK_DRIVE_PHASE=str(int(args.check_drive_phase)),
 							BENCH_RESULT=str(result),
 						)
 						if args.profile:
@@ -247,7 +343,11 @@ def _main() -> None:
 								hdl_toplevel="stream_benchmark",
 								test_module="bench_stream",
 								test_dir=scratch,
-								parameters={"data_width": args.width, "stall_period": args.stall_period},
+								parameters={
+									"data_width": args.width,
+									"stall_period": args.stall_period,
+									"check_drive_phase": "true" if args.check_drive_phase else "false",
+								},
 								results_xml=str(scratch / "results.xml"),
 								log_file=scratch / "run.log",
 							)
@@ -266,12 +366,18 @@ def _main() -> None:
 						cycle_counts[kind].add(measurement["cycles"])
 				for kind, samples in times.items():
 					cycles = "/".join(map(str, sorted(cycle_counts[kind])))
-					print(
+					label = (
 						f"{kind:8} width={args.width:3} frame={size:4} trust={trust} reset={int(args.reset_pin)} "
-						f"stall={args.stall_period} {args.beats} beats / {cycles} cycles: {median(samples):.3f} s median "
-						f"({args.beats / median(samples):.0f} beats/s), samples: {', '.join(f'{s:.3f}' for s in samples)}",
-						flush=True,
+						f"stall={args.stall_period} {args.beats} beats / {cycles} cycles"
 					)
+					if args.check_drive_phase:
+						print(f"{label}: drive phase checked", flush=True)
+					else:
+						print(
+							f"{label}: {median(samples):.3f} s median ({args.beats / median(samples):.0f} beats/s), "
+							f"samples: {', '.join(f'{s:.3f}' for s in samples)}",
+							flush=True,
+						)
 
 
 if __name__ == "__main__":

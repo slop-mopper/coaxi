@@ -4,7 +4,9 @@
 
 """Run the VHDL-2008 regression with nvc and both cocotb write modes."""
 
+from sys import executable
 from pathlib import Path
+from subprocess import run
 from xml.etree import ElementTree
 
 import pytest
@@ -82,3 +84,38 @@ def test_stream_simulation(tmp_path: Path, trust_inertial: str, suite: str, monk
 	for result in results:
 		for status in ("failure", "error", "skipped"):
 			assert result.find(status) is None, ElementTree.tostring(result, encoding="unicode")
+
+
+@pytest.mark.parametrize("stall_period", ["0", "4"])
+def test_benchmark_drive_phase(stall_period: str) -> None:
+	"""Audit frame loop timing with and without stalls in both write modes."""
+	bench = Path(__file__).with_name("bench_stream.py")
+	result = run(
+		[
+			executable,
+			str(bench),
+			"--implementation",
+			"coaxi",
+			"falling-loop",
+			"rising-loop",
+			"--beats",
+			"64",
+			"--frame-size",
+			"1",
+			"8",
+			"--trust-inertial",
+			"0",
+			"1",
+			"--stall-period",
+			stall_period,
+			"--repeat",
+			"1",
+			"--check-drive-phase",
+		],
+		check=False,
+		capture_output=True,
+		text=True,
+		timeout=60,
+	)
+	assert result.returncode == 0, result.stdout + result.stderr
+	assert result.stdout.count("drive phase checked") == 12, result.stdout
