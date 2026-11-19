@@ -11,7 +11,7 @@ packages = ["src/coaxi"]
 
 [project]
 name = "coaxi"
-version = "1.3.0"
+version = "1.3.1"
 description = "AXI interface helpers for cocotb testbenches."
 readme = "README.md"
 requires-python = ">=3.13"
