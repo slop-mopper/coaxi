@@ -9,6 +9,7 @@ from typing import cast, overload
 from dataclasses import dataclass
 from collections import deque
 from itertools import cycle
+from functools import cached_property
 from collections.abc import Iterable, Iterator, Sequence
 
 import cocotb
@@ -174,6 +175,14 @@ class _Endpoint[T]:
 		self._pause_task: Task[None] | None = None
 		self._paused = False
 
+	@cached_property
+	def _rising_edge(self) -> RisingEdge:
+		return RisingEdge(self._clock)
+
+	@cached_property
+	def _falling_edge(self) -> FallingEdge:
+		return FallingEdge(self._clock)
+
 	def set_pause_generator(self, pattern: Iterable[bool | int] | None = None) -> None:
 		"""Replace the clocked pause pattern on this endpoint.
 
@@ -220,7 +229,7 @@ class _Endpoint[T]:
 		task = current_task()
 		try:
 			while self._pause_task is task:
-				await RisingEdge(self._clock)
+				await self._rising_edge
 				# Sample after handshakes and settled reset for use at the next drive.
 				await ReadOnly()
 				if self._pause_task is not task:
@@ -291,7 +300,7 @@ class _Endpoint[T]:
 	async def _start_edge(self) -> None:
 		# Only a successful preceding transfer can share its cleanup edge. Time
 		# alone is insufficient: ReadOnly/ReadWrite can occur in the same step.
-		edge = FallingEdge(self._clock)
+		edge = self._falling_edge
 		completed_at = self._completed_at
 		self._completed_at = None
 		if current_gpi_trigger() is not edge or completed_at != get_sim_time(unit="step"):
@@ -418,7 +427,7 @@ class _Endpoint[T]:
 				return
 			# R0 samples inactive; R1 is the following rising edge. Resume at F1
 			# so the first new transfer can be accepted no earlier than R2.
-			for edge in (RisingEdge(self._clock), RisingEdge(self._clock), FallingEdge(self._clock)):
+			for edge in (self._rising_edge, self._rising_edge, self._falling_edge):
 				await edge
 				if not self._owns_pin_cycle(generation, cycle):
 					return
@@ -462,7 +471,7 @@ class _Endpoint[T]:
 		self._stop_monitor()
 		try:
 			if self._reset is None:
-				await FallingEdge(self._clock)
+				await self._falling_edge
 				self._clear()
 			else:
 				generation = object()
@@ -520,7 +529,7 @@ class _Endpoint[T]:
 		self._paused = False
 		try:
 			if isinstance(self, AxiStreamSource) or self._bus.ready is not None:
-				await FallingEdge(self._clock)
+				await self._falling_edge
 				self._clear()
 		finally:
 			self._resetting = False
@@ -692,7 +701,7 @@ class AxiStreamSource[T = PayloadValue | None](_Endpoint[T]):
 			await self._start_edge()
 		self._check(token)
 		while self._paused:
-			await self._wait_edge(FallingEdge(self._clock), token)
+			await self._wait_edge(self._falling_edge, token)
 			self._check(token)
 		self._payload.drive(data)
 		if metadata:
@@ -701,12 +710,12 @@ class AxiStreamSource[T = PayloadValue | None](_Endpoint[T]):
 			self._bus.last.set(int(bool(last)))
 		self._bus.valid.set(1)
 		while True:
-			await self._wait_edge(RisingEdge(self._clock), token)
+			await self._wait_edge(self._rising_edge, token)
 			self._check(token)
 			if self._bus.ready is None or _bit(self._bus.ready, "ready"):
 				break
 		_log.debug("sent transfer on %s, last=%s", self._name, last)
-		await self._wait_edge(FallingEdge(self._clock), token)
+		await self._wait_edge(self._falling_edge, token)
 		self._check(token)
 		self._bus.valid.set(0)
 		if self._bus.last is not None:
@@ -833,7 +842,7 @@ class AxiStreamSink[T = PayloadValue | None](_Endpoint[T]):
 	async def _capture(self, generation: object) -> None:
 		try:
 			while self._capture_generation is generation:
-				await RisingEdge(self._clock)
+				await self._rising_edge
 				self._observe_reset()
 				if self._capture_generation is not generation:
 					return
@@ -845,7 +854,7 @@ class AxiStreamSink[T = PayloadValue | None](_Endpoint[T]):
 				self._retained += 1
 				# Count the snapshot immediately, but publish it only at cleanup.
 				# A waiting receive therefore keeps the existing completion timing.
-				await FallingEdge(self._clock)
+				await self._falling_edge
 				self._observe_reset()
 				if self._capture_generation is not generation:
 					return
@@ -1014,13 +1023,13 @@ class AxiStreamSink[T = PayloadValue | None](_Endpoint[T]):
 			if ready != allow:
 				self._bus.ready.set(int(allow))
 				ready = allow
-			await self._wait_edge(RisingEdge(self._clock), token)
+			await self._wait_edge(self._rising_edge, token)
 			self._check(token)
 			if ready and _bit(self._bus.valid, "valid"):
 				transfer = self._read_transfer()
 				break
-			await self._wait_edge(FallingEdge(self._clock), token)
-		await self._wait_edge(FallingEdge(self._clock), token)
+			await self._wait_edge(self._falling_edge, token)
+		await self._wait_edge(self._falling_edge, token)
 		self._check(token)
 		self._bus.ready.set(0)
 		return transfer

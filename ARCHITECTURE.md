@@ -117,6 +117,8 @@ neither coverage nor mutation counts act as acceptance thresholds.
   Other simulator phases, later times, initialisation, pin assertion and failures invalidate reuse.
   Cleanup writes can be superseded on the same edge; valid/ready need not pulse
   low between calls. Initial calls still wait for a fresh falling edge.
+  Each endpoint caches its two cocotb clock triggers on first use; a trigger
+  subscribes to the clock only while it has a waiter.
 
 `set_pause_generator()` configures either endpoint with a copied, repeating
 sequence or a one-pass iterable. A clock task samples once per rising edge
