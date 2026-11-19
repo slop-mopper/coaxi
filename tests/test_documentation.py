@@ -17,7 +17,7 @@ from runpy import run_path
 from types import UnionType
 from functools import reduce
 from operator import or_
-from typing import Any, Self, TypeAliasType, get_args, get_origin, get_type_hints
+from typing import Any, Literal, Self, TypeAliasType, get_args, get_origin, get_overloads, get_type_hints
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 
 import coaxi
@@ -29,7 +29,7 @@ from cocotb.handle import HierarchyObject, LogicArrayObject, LogicObject, SimHan
 def _reference_entries() -> Iterator[tuple[Path, str, str, str]]:
 	"""Read the explicit Python-domain declarations from the reference."""
 	api = Path(__file__).resolve().parents[1] / "docs" / "api"
-	pattern = r"^```\{py:(class|exception|method|function|type)\} ([^\n]+)\n(.*?)^```"
+	pattern = r"^```\{py:(class|exception|method|function|type)\} ([^\n]+)\n(.*?)^```$"
 	for path in sorted(api.glob("*.md")):
 		text = path.read_text(encoding="utf-8")
 		if path.stem in ("signed", "unsigned"):
@@ -40,7 +40,9 @@ def _reference_entries() -> Iterator[tuple[Path, str, str, str]]:
 				r"^````\{py:class\} ([^\n]+)\n(.*?)^````", text, re.MULTILINE | re.DOTALL
 			).groups()
 			body = body.split("```{include}", 1)[0]
-			yield path, "class", declaration, body
+			yield path, "class", declaration, body.split("```{py:class}", 1)[0]
+			for match in re.finditer(pattern, body, re.MULTILINE | re.DOTALL):
+				yield path, *match.groups()
 			shared = (api.parent / "_numeric-methods.md").read_text(encoding="utf-8")
 			for match in re.finditer(pattern, shared, re.MULTILINE | re.DOTALL):
 				kind, declaration, body = match.groups()
@@ -55,6 +57,7 @@ def _reference_namespace(owner: Any) -> dict[str, Any]:
 	namespace = {
 		**vars(coaxi),
 		"Self": Self,
+		"Literal": Literal,
 		"Iterable": Iterable,
 		"Sequence": Sequence,
 		"Mapping": Mapping,
@@ -119,6 +122,20 @@ def _documented_signature(text: str, namespace: dict[str, Any]) -> inspect.Signa
 	return inspect.Signature(parameters, return_annotation=eval(ast.unparse(node.returns), namespace))
 
 
+def _implemented_signature(function: Any) -> inspect.Signature:
+	"""Resolve annotations and omit the implicit instance or class parameter."""
+	signature = inspect.signature(function)
+	hints = get_type_hints(function.__init__ if inspect.isclass(function) else function)
+	return signature.replace(
+		parameters=[
+			p.replace(annotation=_public_annotation(hints.get(p.name, p.annotation)))
+			for p in signature.parameters.values()
+			if p.name not in ("self", "cls")
+		],
+		return_annotation=_public_annotation(hints.get("return", signature.return_annotation)),
+	)
+
+
 def test_reference_matches_public_api() -> None:
 	"""Check export coverage, separate class pages, and typed parameter/return contracts."""
 	config = run_path(str(Path(__file__).resolve().parents[1] / "docs" / "conf.py"))
@@ -127,7 +144,8 @@ def test_reference_matches_public_api() -> None:
 	assert config["python_trailing_comma_in_multi_line_signatures"] is True
 	exports: set[str] = set()
 	methods: dict[str, set[str]] = {}
-	class_pages: list[Path] = []
+	class_pages: set[tuple[Path, str]] = set()
+	numeric_overloads: dict[str, list[inspect.Signature]] = {}
 	for path, kind, declaration, body in _reference_entries():
 		name = re.split(r"[\[(]", declaration, maxsplit=1)[0]
 		owner_name, _, member_name = name.partition(".")
@@ -140,7 +158,7 @@ def test_reference_matches_public_api() -> None:
 			exports.add(name)
 			actual = owner
 		if kind in ("class", "exception"):
-			class_pages.append(path)
+			class_pages.add((path, name))
 		if kind == "type":
 			definition = re.search(r"^:annotation: = (.+)$", body, re.MULTILINE)
 			assert definition is not None, name
@@ -165,20 +183,22 @@ def test_reference_matches_public_api() -> None:
 			assert issubclass(owner, Exception)
 			assert list(parameters) == ["args"]  # BaseException has no inspectable signature.
 		else:
-			implemented = inspect.signature(actual)
-			hints = get_type_hints(actual.__init__ if inspect.isclass(actual) else actual)
-			implemented = implemented.replace(
-				parameters=[
-					p.replace(annotation=_public_annotation(hints.get(p.name, p.annotation)))
-					for p in implemented.parameters.values()
-					if p.name not in ("self", "cls")
-				],
-				return_annotation=_public_annotation(hints.get("return", implemented.return_annotation)),
-			)
-			assert documented == implemented, (name, documented, implemented)
+			function = actual.__init__ if inspect.isclass(actual) else actual
+			overloads = get_overloads(function) if owner_name in ("Signed", "Unsigned") else []
+			if overloads:
+				numeric_overloads.setdefault(name, []).append(documented)
+			else:
+				# Constructor inference for the generic endpoints is checked by test_typing.py.
+				implemented = _implemented_signature(actual)
+				assert documented == implemented, (name, documented, implemented)
 			assert (":async:" in body) == inspect.iscoroutinefunction(actual), name
 	assert exports == set(coaxi.__all__)
-	assert len(class_pages) == len(set(class_pages)), "each public class needs its own page"
+	assert len(class_pages) == len({path for path, _ in class_pages}), "each public class needs its own page"
+	for name, documented_forms in numeric_overloads.items():
+		owner, _, method = name.partition(".")
+		function = getattr(getattr(coaxi, owner), method or "__init__")
+		implemented = [_implemented_signature(overload) for overload in get_overloads(function)]
+		assert Counter(documented_forms) == Counter(implemented), (name, documented_forms, implemented)
 	for name in exports:
 		owner = getattr(coaxi, name)
 		if not inspect.isclass(owner) or issubclass(owner, Exception):

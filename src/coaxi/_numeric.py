@@ -9,7 +9,7 @@ from __future__ import annotations
 import operator
 import warnings
 from collections.abc import Iterator
-from typing import ClassVar, Self, overload
+from typing import ClassVar, Literal, Self, overload
 
 from cocotb.types import Logic, LogicArray, Range
 
@@ -37,6 +37,23 @@ def _natural(value: int, *, allow_bool: bool = True) -> int:
 	if value < 0:
 		raise ValueError("expected a non-negative integer")
 	return value
+
+
+class _Omitted:
+	__slots__ = ()
+
+
+_OMITTED = _Omitted()
+
+
+def _bit_count(width: int | _Omitted, w: int | _Omitted) -> int:
+	if isinstance(width, _Omitted):
+		if isinstance(w, _Omitted):
+			raise TypeError("specify width or w")
+		width = w
+	elif not isinstance(w, _Omitted):
+		raise TypeError("width and w are mutually exclusive")
+	return _natural(width, allow_bool=False)
 
 
 def _number(text: str, signed: bool) -> int:
@@ -75,17 +92,38 @@ class _Numeric(_Bits):
 	__slots__ = ()
 	_signed: ClassVar[bool] = False
 
-	def __init__(self, value: LogicArray | Signed | Unsigned) -> None:
-		"""Copy the bits and index range of value, reinterpreting signedness."""
+	@overload
+	def __init__(self, value: LogicArray | Signed | Unsigned) -> None: ...
+
+	@overload
+	def __init__(self, value: Literal[0], *, width: int) -> None: ...
+
+	@overload
+	def __init__(self, value: Literal[0], *, w: int) -> None: ...
+
+	def __init__(
+		self,
+		value: LogicArray | Signed | Unsigned | Literal[0],
+		*,
+		width: int | _Omitted = _OMITTED,
+		w: int | _Omitted = _OMITTED,
+	) -> None:
+		"""Copy a vector's bits and range, or initialise integer zero with width or w."""
 		if hasattr(self, "_text"):
 			raise AttributeError("numeric values are immutable")
-		if isinstance(value, _Numeric):
+		if type(value) is int and value == 0:
+			count = _bit_count(width, w)
+			text = "0" * count
+			bounds = (count - 1, "downto", 0) if count else (0, "downto", 1)
+		elif not isinstance(width, _Omitted) or not isinstance(w, _Omitted):
+			raise TypeError("the constructor accepts width or w only with integer zero")
+		elif isinstance(value, _Numeric):
 			text, bounds = value._text, value._bounds
 		elif isinstance(value, LogicArray):
 			text = str(value)
 			bounds = (value.range.left, value.range.direction, value.range.right)
 		else:
-			raise TypeError("expected LogicArray, Signed, or Unsigned; use from_int for Python integers")
+			raise TypeError("expected LogicArray, Signed, Unsigned, or integer zero; use from_int for other integers")
 		if text and (bounds[0] < 0 or bounds[2] < 0):
 			raise ValueError("numeric_std non-null vectors require non-negative indices")
 		object.__setattr__(self, "_text", text)
@@ -115,10 +153,18 @@ class _Numeric(_Bits):
 		return cls._new(format(value & ((1 << width) - 1), f"0{width}b")) if width else cls._null()
 
 	@classmethod
-	def from_int(cls, value: int, *, width: int) -> Self:
-		"""Convert an integer or bool value; require a non-boolean width and check positive-width range."""
+	@overload
+	def from_int(cls, value: int, *, width: int) -> Self: ...
+
+	@classmethod
+	@overload
+	def from_int(cls, value: int, *, w: int) -> Self: ...
+
+	@classmethod
+	def from_int(cls, value: int, *, width: int | _Omitted = _OMITTED, w: int | _Omitted = _OMITTED) -> Self:
+		"""Convert an integer or bool with a non-boolean width or w, checking positive-width range."""
 		_integer(value)
-		_natural(width, allow_bool=False)
+		width = _bit_count(width, w)
 		if not cls._signed:
 			_natural(value)
 		if width == 0:
@@ -187,9 +233,15 @@ class _Numeric(_Bits):
 		value = self._array()[item]
 		return type(self)(value) if isinstance(value, LogicArray) else value
 
-	def resize(self, width: int) -> Self:
-		"""Apply VHDL resize with a non-boolean width, keeping the original sign on signed narrowing."""
-		_natural(width, allow_bool=False)
+	@overload
+	def resize(self, width: int) -> Self: ...
+
+	@overload
+	def resize(self, *, w: int) -> Self: ...
+
+	def resize(self, width: int | _Omitted = _OMITTED, *, w: int | _Omitted = _OMITTED) -> Self:
+		"""Apply VHDL resize with a non-boolean width or w, keeping the sign on signed narrowing."""
+		width = _bit_count(width, w)
 		if not width:
 			return type(self)._null()
 		if not self.width:

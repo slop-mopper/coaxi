@@ -54,6 +54,68 @@ def test_copy_ranges_and_immutability(kind: type[Signed] | type[Unsigned]) -> No
 
 
 @pytest.mark.parametrize("kind", [Signed, Unsigned])
+@pytest.mark.parametrize("width", [0, 1, 16, 257])
+def test_zero_construction(kind: type[Signed] | type[Unsigned], width: int) -> None:
+	"""Both spellings produce zeros with the standard descending or null range."""
+	bounds = (width - 1, "downto", 0) if width else (0, "downto", 1)
+	for value in (kind(value=0, width=width), kind(0, w=width)):
+		assert type(value) is kind
+		assert value.width == width and str(value) == "0" * width
+		assert (value.range.left, value.range.direction, value.range.right) == bounds
+		with pytest.raises(AttributeError, match="immutable"):
+			value.__init__(0, w=width)
+
+
+@pytest.mark.parametrize("kind", [Signed, Unsigned])
+def test_width_alias_operations(kind: type[Signed] | type[Unsigned]) -> None:
+	"""The alias also supports checked conversion and VHDL resizing."""
+	for number in (0, True, -3 if kind is Signed else 13):
+		for width in (0, 4, 16):
+			value = kind.from_int(number, w=width)
+			canonical = kind.from_int(number, width=width)
+			assert str(value) == str(canonical)
+			assert (value.range.left, value.range.direction, value.range.right) == (
+				canonical.range.left,
+				canonical.range.direction,
+				canonical.range.right,
+			)
+	with pytest.raises(OverflowError):
+		kind.from_int(16, w=4)
+	for text in ("", "H1X0"):
+		value = kind(LogicArray(text))
+		for width in (0, 2, 6):
+			resized = value.resize(w=width)
+			assert str(resized) == str(value.resize(width=width)) == str(value.resize(width))
+			bounds = (width - 1, "downto", 0) if width else (0, "downto", 1)
+			assert (resized.range.left, resized.range.direction, resized.range.right) == bounds
+
+
+@pytest.mark.parametrize("kind", [Signed, Unsigned])
+def test_invalid_width_calls(kind: type[Signed] | type[Unsigned]) -> None:
+	"""Runtime validation also applies to calls made without type checking."""
+	dynamic = cast(Any, kind)
+	value = dynamic(LogicArray("0"))
+	for call, args in [(dynamic, (0,)), (dynamic.from_int, (0,)), (value.resize, ())]:
+		with pytest.raises(TypeError, match="specify width or w"):
+			call(*args)
+		for width, w in [(0, 0), (1, 2), (None, 1), (1, None)]:
+			with pytest.raises(TypeError, match="mutually exclusive"):
+				call(*args, width=width, w=w)
+		for name in ("width", "w"):
+			for invalid in (False, True, 2.0, None, "2"):
+				with pytest.raises(TypeError, match="Python integer"):
+					call(*args, **{name: invalid})
+			with pytest.raises(ValueError, match="non-negative integer"):
+				call(*args, **{name: -1})
+	with pytest.raises(TypeError, match="mutually exclusive"):
+		value.resize(1, w=1)
+	for invalid in (1, -1, False, True, 0.0, LogicArray("0"), value):
+		for name in ("width", "w"):
+			with pytest.raises(TypeError, match="only with integer zero"):
+				dynamic(invalid, **{name: 0})
+
+
+@pytest.mark.parametrize("kind", [Signed, Unsigned])
 def test_index_domain(kind: type[Signed] | type[Unsigned]) -> None:
 	"""numeric_std indices are natural; negative bounds are allowed only for null arrays."""
 	with pytest.raises(ValueError, match="non-negative indices"):

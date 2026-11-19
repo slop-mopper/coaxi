@@ -17,8 +17,25 @@
 
 :returns: A value with range `width - 1 downto 0`, or `0 downto 1` at zero width.
 :raises OverflowError: The integer does not fit a positive width.
-:raises TypeError: `value` is not an integer, or `width` is not an integer or is a boolean.
+:raises TypeError: `value` is not an integer, or `width` is omitted, non-integer, or boolean.
 :raises ValueError: `width` is negative, or an `Unsigned` input value is negative.
+```
+
+```{py:method} from_int(value: int, *, w: int) -> Self
+:classmethod:
+:no-index:
+
+:Parameters:
+  - `value: int`
+
+    Python integer, with the same constraints as the `width` form.
+
+  - `w: int`
+
+    Alias for `width`, with the same constraints.
+
+:returns: The same value as the `width` form.
+:raises TypeError: Both `width` and `w` are supplied.
 ```
 
 ```{py:method} to_int() -> int
@@ -48,13 +65,27 @@
 :Parameters:
   - `width: int`
 
-    Non-negative result bit count; booleans raise `TypeError`.
-    Unsigned widening adds zeros; signed widening
-    copies the raw sign bit. Unsigned narrowing keeps the low bits. Signed
-    narrowing keeps the original sign and the lowest `width - 1` bits.
+    Non-negative result bit count, given positionally or by keyword.
 
 :returns: A resized value with descending range. Zero width gives `0 downto 1`;
-    resizing a null input to positive width gives zeros.
+    resizing a null input to positive width gives zeros. Unsigned widening
+    adds zeros and narrowing keeps the low bits. Signed widening copies the
+    raw sign bit; narrowing keeps the original sign and the lowest
+    `width - 1` bits.
+:raises TypeError: `width` is omitted, non-integer, or boolean.
+:raises ValueError: `width` is negative.
+```
+
+```{py:method} resize(*, w: int) -> Self
+:no-index:
+
+:Parameters:
+  - `w: int`
+
+    Alias for `width`, with the same constraints.
+
+:returns: The same value as the `width` form.
+:raises TypeError: `w` is supplied with a positional width or `width` keyword.
 ```
 
 ## Remainder and modulus

@@ -24,11 +24,14 @@ This separation allows future fixed-point types to share bit storage without
 inheriting integer format rules. Fixed-point types are not implemented.
 
 Constructors copy `LogicArray` or numeric values, including their index range.
-Cross-signedness construction reinterprets bits. Python-integer conversion is
-explicit; positive-width input conversions raise `OverflowError` when the
-integer does not fit. Boolean numeric inputs mean zero or one. Widths and
-shift/rotation counts reject booleans with `TypeError`, including on null inputs.
-Width-zero conversion follows the package's null return.
+Cross-signedness construction reinterprets bits. Constructors also accept
+integer `0` with a width. Zero construction, `from_int()`, and `resize()` accept
+either `width` or `w` and raise `TypeError` if both are supplied. `resize()` also
+accepts a positional width. Typed overloads describe the alternatives.
+`from_int()` raises `OverflowError` when the input does not fit a positive
+width. Boolean inputs to `from_int()` and scalar operations mean zero or one.
+Widths and shift/rotation counts reject booleans, including on null inputs.
+Zero-width construction and conversion return the package's null range.
 Integer operation overloads use the package's operation-specific conversions;
 ordinary comparisons can compare against integers outside the vector range.
 Arithmetic results follow VHDL widths and wrap, including scalar division

@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: CC0-1.0
 # This file was created by an AI model: openai/gpt-6.1-sol
 
-"""Check constructor and frame-method types with Pyrefly's default configuration."""
+"""Check public call signatures with Pyrefly's default configuration."""
 
+import re
 import sys
 import subprocess
 from pathlib import Path
@@ -55,6 +56,57 @@ def test_constructor_types(tmp_path: Path, endpoint: str, scenario: str) -> None
 		assert statement in output, output
 	else:
 		assert result.returncode == 0, output
+
+
+@pytest.mark.parametrize("kind", ["Signed", "Unsigned"])
+@pytest.mark.parametrize("valid", [True, False])
+def test_numeric_width_signatures(tmp_path: Path, kind: str, valid: bool) -> None:
+	"""Type check zero construction, integer conversion, and resize with either spelling."""
+	lines = [
+		"from typing import assert_type",
+		"from cocotb.types import LogicArray",
+		f"from coaxi import {kind}",
+		"",
+		f"def check(number: int, vector: LogicArray, value: {kind}) -> None:",
+	]
+	if valid:
+		statements = [
+			f"{kind}(vector)",
+			f"{kind}(value)",
+			f"{kind}(0, width=16)",
+			f"{kind}(value=0, w=16)",
+			f"{kind}.from_int(number, width=16)",
+			f"{kind}.from_int(value=number, w=16)",
+			"value.resize(16)",
+			"value.resize(width=16)",
+			"value.resize(w=16)",
+		]
+		statements = [f"assert_type({call}, {kind})" for call in statements]
+	else:
+		statements = [
+			f"{kind}(0)",
+			f"{kind}(1, width=16)",
+			f"{kind}(False, w=16)",
+			f"{kind}(number, w=16)",
+			f"{kind}(vector, width=16)",
+			f"{kind}(0, width=16, w=16)",
+			f"{kind}.from_int(number)",
+			f"{kind}.from_int(number, width=16, w=16)",
+			f"{kind}.from_int(number, w=None)",
+			"value.resize()",
+			"value.resize(width=16, w=16)",
+			"value.resize(16, w=16)",
+		]
+	source = tmp_path / "numeric_typing_case.py"
+	source.write_text("\n".join([*lines, *(f"\t{statement}" for statement in statements)]) + "\n", encoding="utf-8")
+	result = _check(source)
+	output = result.stdout + result.stderr
+	if valid:
+		assert result.returncode == 0, output
+	else:
+		assert result.returncode == 1, output
+		error_lines = [int(line) for line in re.findall(r"--> .*numeric_typing_case\.py:(\d+):\d+", output)]
+		assert sorted(error_lines) == list(range(len(lines) + 1, len(lines) + len(statements) + 1)), output
 
 
 def test_custom_payload_example_types(tmp_path: Path) -> None:

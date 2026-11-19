@@ -9,6 +9,10 @@ wraps when a result does not fit.
 ```{doctest}
 >>> from cocotb.types import Logic, LogicArray, Range
 >>> from coaxi import Signed, Unsigned, NumericStdWarning
+>>> str(Signed(0, width=8)), str(Unsigned(0, w=4))
+('00000000', '0000')
+>>> str(Unsigned.from_int(3, w=4).resize(w=6))
+'000011'
 >>> u = Unsigned.from_int(255, width=8)
 >>> s = Signed(u)
 >>> int(u), int(s), int(Unsigned(s))
@@ -23,11 +27,18 @@ Traceback (most recent call last):
 OverflowError: 256 does not fit Unsigned with width 8
 ```
 
-Constructors accept `LogicArray`, `Signed`, or `Unsigned`, copying all bits
-and the input range. Non-null indices must be non-negative, following the
-package's `natural` index subtype. Changing signedness reinterprets the bits.
-Use `from_int()` for Python integers. At positive widths it raises
-`OverflowError` if the integer does not fit. At width zero it returns a null
+Construct from integer `0` with a width to initialise every bit to zero.
+A width of zero gives a null vector with range `0 downto 1`. Use either
+`width` or `w` for zero construction, `from_int()`, and `resize()`. Supplying
+both names raises `TypeError`. `resize(8)` also accepts the width positionally.
+
+When constructing from a `LogicArray`, `Signed`, or `Unsigned`, the constructor
+copies the bits and range from the input, so omit the width. Non-null indices
+must be non-negative, following the package's `natural` index subtype.
+Changing signedness reinterprets the bits.
+
+Use `from_int()` for general Python integers. At positive widths it raises
+`OverflowError` if the integer does not fit. At zero width it returns a null
 vector, even for a nonzero integer. `Unsigned.from_int()` rejects negative
 integers at any width.
 
