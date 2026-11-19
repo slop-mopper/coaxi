@@ -5,6 +5,7 @@
 """Synchronous payload access, preserving HDL logic values and record fields."""
 
 from typing import Protocol
+from functools import cached_property
 from collections.abc import Mapping
 
 from cocotb.types import Logic, LogicArray
@@ -109,6 +110,22 @@ class HandlePayload:
 		except (ValueError, TypeError, OverflowError) as exc:
 			raise type(exc)(f"{handle._path}: {exc}") from exc
 
+	@cached_property
+	def _integer_width(self) -> int:
+		handle = self._handle
+		if type(handle) is LogicArrayObject:
+			width = len(handle)
+			if 1 <= width <= 31 and width == len(handle.range):
+				# Cocotb may reject an unsigned bit pattern as an integer on
+				# a signed handle. Use the logic path for those values.
+				try:
+					return width - int(handle.is_signed)
+				except RuntimeError:
+					# Some simulators omit signedness for logic vectors but
+					# still accept integer deposits.
+					return width
+		return 0
+
 	def drive(self, value: PayloadValue) -> None:
 		"""Validate the entire value, then drive it without yielding.
 
@@ -118,6 +135,17 @@ class HandlePayload:
 		"""
 		handle = self._handle
 		if isinstance(handle, (LogicObject, LogicArrayObject)):
+			# Use cocotb's short-vector integer deposit for ordinary unsigned
+			# values. Keep validation and diagnostics on the general path.
+			if type(value) is int and value >= 0 and (value.bit_length() or 1) <= self._integer_width:
+				try:
+					handle.set(value)
+				except ValueError:
+					# The handle's integer range may be narrower when the
+					# simulator cannot report its signedness.
+					pass
+				else:
+					return
 			handle.set(self._leaf_value(handle, value))
 		else:
 			for handle, leaf in self._prepare(value):

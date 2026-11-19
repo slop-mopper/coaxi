@@ -35,6 +35,10 @@ architecture test of stream_dut is
 	signal \offer-now!\, \take-it?\ : std_logic := '0';
 
 	signal scalar_value : std_logic := '0';
+	signal indexed_bit : std_logic_vector(7 to 7) := "0";
+	signal signed_word : signed(30 downto 0) := (others => '0');
+	signal unsigned_word : unsigned(0 to 31) := (others => '0');
+	signal wide_word : std_logic_vector(64 downto 0) := (others => '0');
 	signal single_clock : std_logic_vector(7 downto 7) := "0";
 	signal single_valid : std_logic_vector(2 to 2) := "0";
 	signal single_ready : std_logic_vector(4 downto 4) := "0";

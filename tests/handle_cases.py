@@ -19,6 +19,7 @@ from coaxi import (
 	AxiStreamBus,
 	AxiStreamSink,
 	AxiStreamSource,
+	HandlePayload,
 	EndpointStateError,
 	PayloadValue,
 	ProtocolValueError,
@@ -59,6 +60,40 @@ def _setup(dut: HierarchyObject, *, framed: bool = True) -> AxiStreamBus:
 		assert isinstance(bus.last, LogicArrayObject)
 	assert bus.resolve_clock("single_clock") is clock
 	return bus
+
+
+@cocotb.test(timeout_time=10000, timeout_unit="ns")
+@cocotb.parametrize(signal=["indexed_bit", "plain_data", "signed_word", "unsigned_word", "wide_word"])
+async def integer_vector_drive(dut: HierarchyObject, signal: str) -> None:
+	"""Check unsigned wire bits on ascending, signed, short, and wide vectors."""
+	handle = getattr(dut, signal)
+	assert isinstance(handle, LogicArrayObject)
+	payload = HandlePayload(handle)
+	width = len(handle)
+	bits = "UX" * (width // 2) + "Z" * (width % 2)
+	highest = 1 << (width - 1)
+	maximum = (1 << width) - 1
+	for value, expected in (
+		(bits, bits),
+		(0, "0" * width),
+		(highest, "1" + "0" * (width - 1)),
+		(maximum, "1" * width),
+		(True, "0" * (width - 1) + "1"),
+	):
+		await Timer(1, unit="ns")
+		payload.drive(value)
+		await ReadOnly()
+		assert str(handle.value) == expected
+
+	await Timer(1, unit="ns")
+	with pytest.raises(ValueError, match="must be unsigned") as negative:
+		payload.drive(-1)
+	with pytest.raises(ValueError, match="too large to fit") as overflow:
+		payload.drive(maximum + 1)
+	assert handle._path in str(negative.value)
+	assert handle._path in str(overflow.value)
+	await ReadOnly()
+	assert str(handle.value) == "0" * (width - 1) + "1"
 
 
 @cocotb.test(timeout_time=10000, timeout_unit="ns")

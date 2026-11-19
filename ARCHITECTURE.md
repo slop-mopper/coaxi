@@ -95,7 +95,10 @@ neither coverage nor mutation counts act as acceptance thresholds.
   omitting the adapter selects `PayloadValue | None`. A private absent-data
   adapter accepts/returns only None, with no handle access. An explicit adapter
   requires data; with data present its T remains precise, and the default
-  HandlePayload rejects None.
+  HandlePayload rejects None. For flat vectors up to 31 bits, Python integers
+  within the handle's non-negative range use cocotb's integer deposit. Values
+  that need the sign bit on a signed handle use the usual logic conversion.
+  Record fields are validated before any writes.
 - `_sideband.py` keeps metadata conversion separate from generic payload access.
   `AxiStreamSidebands` is an optional immutable source input; it is unnecessary
   for bare-bones traffic. Bound defaults are keep=ones, strb=effective keep,
@@ -118,7 +121,8 @@ neither coverage nor mutation counts act as acceptance thresholds.
   Cleanup writes can be superseded on the same edge; valid/ready need not pulse
   low between calls. Initial calls still wait for a fresh falling edge.
   Each endpoint caches its two cocotb clock triggers on first use; a trigger
-  subscribes to the clock only while it has a waiter.
+  subscribes to the clock only while it has a waiter. Endpoints use shared
+  `Logic` values for control deposits and sample controls through `get()`.
 
 `set_pause_generator()` configures either endpoint with a copied, repeating
 sequence or a one-pass iterable. A clock task samples once per rising edge

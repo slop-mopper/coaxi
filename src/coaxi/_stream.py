@@ -32,6 +32,8 @@ from ._payload import Payload, HandlePayload, PayloadValue, _AbsentPayload
 from ._sideband import _Values, _identity, _SidebandAccess, AxiStreamSidebands
 
 _log = logging.getLogger("coaxi.stream")
+_LOW = Logic(0)
+_HIGH = Logic(1)
 
 
 class ProtocolValueError(ValueError):
@@ -73,7 +75,7 @@ class AxiStreamTransfer[T]:
 
 
 def _bit(handle: _Control, role: str) -> bool:
-	value = str(handle.value)
+	value = str(handle.get())
 	if value not in ("0", "1"):
 		raise ProtocolValueError(f"{role} ({handle._path}) must be 0 or 1, got {value}")
 	return value == "1"
@@ -368,7 +370,7 @@ class _Endpoint[T]:
 			return
 		if self._pin_value is None and not first_sample:
 			return
-		value = str(self._reset.value)
+		value = str(self._reset.get())
 		if value == self._pin_value:
 			return
 		self._pin_value = value
@@ -597,9 +599,9 @@ class AxiStreamSource[T = PayloadValue | None](_Endpoint[T]):
 		super().__init__(bus, clock, payload, reset, reset_active_high)
 
 	def _clear(self) -> None:
-		self._bus.valid.set(0)
+		self._bus.valid.set(_LOW)
 		if self._bus.last is not None:
-			self._bus.last.set(0)
+			self._bus.last.set(_LOW)
 		try:
 			self._payload.clear()
 		finally:
@@ -707,8 +709,8 @@ class AxiStreamSource[T = PayloadValue | None](_Endpoint[T]):
 		if metadata:
 			self._sidebands.drive(metadata)
 		if self._bus.last is not None:
-			self._bus.last.set(int(bool(last)))
-		self._bus.valid.set(1)
+			self._bus.last.set(_HIGH if last else _LOW)
+		self._bus.valid.set(_HIGH)
 		while True:
 			await self._wait_edge(self._rising_edge, token)
 			self._check(token)
@@ -717,9 +719,9 @@ class AxiStreamSource[T = PayloadValue | None](_Endpoint[T]):
 		_log.debug("sent transfer on %s, last=%s", self._name, last)
 		await self._wait_edge(self._falling_edge, token)
 		self._check(token)
-		self._bus.valid.set(0)
+		self._bus.valid.set(_LOW)
 		if self._bus.last is not None:
-			self._bus.last.set(0)
+			self._bus.last.set(_LOW)
 
 
 class AxiStreamSink[T = PayloadValue | None](_Endpoint[T]):
@@ -832,7 +834,7 @@ class AxiStreamSink[T = PayloadValue | None](_Endpoint[T]):
 
 	def _clear(self) -> None:
 		if self._bus.ready is not None:
-			self._bus.ready.set(0)
+			self._bus.ready.set(_LOW)
 		self._discard()
 
 	def _release(self, count: int) -> None:
@@ -1021,7 +1023,7 @@ class AxiStreamSink[T = PayloadValue | None](_Endpoint[T]):
 			self._check(token)
 			allow = not self._paused
 			if ready != allow:
-				self._bus.ready.set(int(allow))
+				self._bus.ready.set(_HIGH if allow else _LOW)
 				ready = allow
 			await self._wait_edge(self._rising_edge, token)
 			self._check(token)
@@ -1031,5 +1033,5 @@ class AxiStreamSink[T = PayloadValue | None](_Endpoint[T]):
 			await self._wait_edge(self._falling_edge, token)
 		await self._wait_edge(self._falling_edge, token)
 		self._check(token)
-		self._bus.ready.set(0)
+		self._bus.ready.set(_LOW)
 		return transfer

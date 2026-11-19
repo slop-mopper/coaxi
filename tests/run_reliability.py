@@ -41,8 +41,8 @@ _MUTATIONS = [
 	_Mutation(
 		"duplicate_acceptance",
 		"_stream.py",
-		"\t\tawait self._wait_edge(self._falling_edge, token)\n\t\tself._check(token)\n\t\tself._bus.valid.set(0)",
-		"\t\tawait self._wait_edge(self._rising_edge, token)\n\t\tself._check(token)\n\t\tself._bus.valid.set(0)",
+		"\t\tawait self._wait_edge(self._falling_edge, token)\n\t\tself._check(token)\n\t\tself._bus.valid.set(_LOW)",
+		"\t\tawait self._wait_edge(self._rising_edge, token)\n\t\tself._check(token)\n\t\tself._bus.valid.set(_LOW)",
 		"source_wire_scoreboard",
 		"wire mismatch",
 	),
