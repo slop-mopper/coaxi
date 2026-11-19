@@ -110,8 +110,10 @@ neither coverage nor mutation counts act as acceptance thresholds.
   at rising edges before clocked HDL updates. Completion schedules cleanup at
   the following falling edge. Immediately consecutive calls reuse that edge
   to sustain one accepted transfer per rising edge when data and ready permit.
-  Reuse requires both the recorded completion time (in simulator steps) and
-  `current_gpi_trigger()` to identify that clock's falling-edge callback.
+  Within a frame, the next beat uses the previous beat's falling-edge cleanup
+  directly when the bus has `ready`, or when the source is sending without it.
+  Between calls, reuse requires both the recorded completion time (in simulator
+  steps) and `current_gpi_trigger()` to identify that clock's falling-edge callback.
   Other simulator phases, later times, initialisation, pin assertion and failures invalidate reuse.
   Cleanup writes can be superseded on the same edge; valid/ready need not pulse
   low between calls. Initial calls still wait for a fresh falling edge.

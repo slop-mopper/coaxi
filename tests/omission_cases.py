@@ -413,8 +413,8 @@ class _GatedSink(AxiStreamSink[PayloadValue | None]):
 		self.release = Event()
 		self.hold = True
 
-	async def _recv_one(self, token: object) -> AxiStreamTransfer[PayloadValue | None]:
-		value = await super()._recv_one(token)
+	async def _recv_one(self, token: object, *, reuse_edge: bool = False) -> AxiStreamTransfer[PayloadValue | None]:
+		value = await super()._recv_one(token, reuse_edge=reuse_edge)
 		if self.hold:
 			self.hold = False
 			self.entered.set()

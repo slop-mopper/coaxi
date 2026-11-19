@@ -4,6 +4,8 @@
 
 """Measure AXI-Stream loopback throughput with an optional cocotbext-axi comparison."""
 
+from __future__ import annotations
+
 import os
 import sys
 import json
@@ -11,7 +13,8 @@ import logging
 import argparse
 from time import perf_counter
 from pathlib import Path
-from struct import pack, unpack
+from random import Random
+from struct import Struct
 from cProfile import Profile
 from tempfile import TemporaryDirectory
 from importlib import import_module
@@ -20,20 +23,28 @@ from xml.etree import ElementTree
 
 import cocotb
 from cocotb.clock import Clock
-from cocotb.handle import HierarchyObject
+from cocotb.handle import HierarchyObject, LogicArrayObject
 from cocotb.triggers import Timer, ReadOnly, FallingEdge, with_timeout
 from cocotb_tools.runner import get_runner
+
+
+def _codec(width: int) -> Struct | None:
+	code = {8: "B", 16: "H", 32: "I", 64: "Q"}.get(width)
+	return None if code is None else Struct("<" + code)
 
 
 @cocotb.test()
 async def stream_throughput(dut: HierarchyObject) -> None:
 	"""Verify all payloads, frame lengths, hardware counts, and handshake spacing."""
 	implementation = os.environ["BENCH_IMPLEMENTATION"]
-	using_coaxi = implementation != "legacy"
+	using_coaxi = implementation not in ("legacy", "legacy-word")
 	beats = int(os.environ["BENCH_BEATS"])
 	frame_size = int(os.environ["BENCH_FRAME_SIZE"])
 	reset_pin = os.environ["BENCH_RESET"] == "1"
 	frame_count = beats // frame_size
+	width = int(os.environ["BENCH_WIDTH"])
+	stall_period = int(os.environ["BENCH_STALL_PERIOD"])
+	assert len(dut.s_tdata) == len(dut.m_tdata) == width
 	profile_path = os.environ.get("BENCH_PROFILE")
 	profile = Profile() if profile_path else None
 	logging.getLogger("coaxi.stream").setLevel(logging.WARNING)
@@ -44,13 +55,28 @@ async def stream_throughput(dut: HierarchyObject) -> None:
 	reset = dut.reset if reset_pin else None
 	dut.reset.value = int(reset_pin)
 	if using_coaxi:
-		from coaxi import AxiStreamBus, AxiStreamSink, AxiStreamSource
+		from coaxi import AxiStreamBus, AxiStreamSink, AxiStreamSource, AxiStreamTransfer, HandlePayload, PayloadValue
+
+		class DirectIntegerDrive(HandlePayload):
+			"""Benchmark-only adapter for the generated, in-range integer input."""
+
+			def __init__(self, handle: LogicArrayObject) -> None:
+				super().__init__(handle)
+				self._vector = handle
+
+			def drive(self, value: PayloadValue) -> None:
+				assert isinstance(value, int)
+				self._vector.set(value)
 
 		if implementation == "baseline":
 			baseline = Path(os.environ["BENCH_BASELINE_PATH"])
 			assert Path(import_module("coaxi").__file__).resolve().parent == baseline / "coaxi"
-		source = AxiStreamSource(
-			AxiStreamBus.bind(dut, prefix="s", last=True), clock, reset=reset, reset_active_high=True
+		source = AxiStreamSource[PayloadValue | None](
+			AxiStreamBus.bind(dut, prefix="s", last=True),
+			clock,
+			reset=reset,
+			reset_active_high=True,
+			payload=DirectIntegerDrive(dut.s_tdata) if implementation == "direct" else None,
 		)
 		sink = AxiStreamSink(AxiStreamBus.bind(dut, prefix="m", last=True), clock, reset=reset, reset_active_high=True)
 		await source.initialise()
@@ -60,23 +86,41 @@ async def stream_throughput(dut: HierarchyObject) -> None:
 		await sink.wait_available()
 	else:
 		legacy = import_module("cocotbext.axi")
-		tx = legacy.AxiStreamSource(legacy.AxiStreamBus.from_prefix(dut, "s"), clock, reset=reset)
-		rx = legacy.AxiStreamSink(legacy.AxiStreamBus.from_prefix(dut, "m"), clock, reset=reset)
+		byte_size = width if implementation == "legacy-word" else 8
+		tx = legacy.AxiStreamSource(legacy.AxiStreamBus.from_prefix(dut, "s"), clock, reset=reset, byte_size=byte_size)
+		rx = legacy.AxiStreamSink(legacy.AxiStreamBus.from_prefix(dut, "m"), clock, reset=reset, byte_size=byte_size)
 		await FallingEdge(clock)
 		dut.reset.value = 0
 		await FallingEdge(clock)
 
-	# Repeat byte-aligned frames with a different first word on each frame.
-	payloads = [tuple((first + i * 71) & 0xFFFF for i in range(frame_size)) for first in range(frame_count)]
-	encoded = [pack(f"<{frame_size}H", *data) for data in payloads] if implementation == "legacy" else []
+	random = Random(2028)
+	payloads = [tuple(random.getrandbits(width) for _ in range(frame_size)) for _ in range(frame_count)]
+	bytes_per_beat = width // 8
+	codec = _codec(width)
+	encoded = []
+	if implementation == "legacy":
+		encoded = [b"".join(word.to_bytes(bytes_per_beat, "little") for word in data) for data in payloads]
 	received: list[tuple[int, ...]] = []
+	snapshots: list[list[AxiStreamTransfer[PayloadValue | None]]] = []
+
+	def decode_coaxi(packet: list[AxiStreamTransfer[PayloadValue | None]]) -> tuple[int, ...]:
+		assert len(packet) == frame_size and packet[-1].last is True
+		return tuple(int(beat.data) for beat in packet)
+
+	def decode_bytes(packet: bytes | bytearray) -> tuple[int, ...]:
+		assert len(packet) == frame_size * bytes_per_beat
+		if codec is not None:
+			return tuple(word for (word,) in codec.iter_unpack(packet))
+		return tuple(
+			int.from_bytes(packet[i : i + bytes_per_beat], "little") for i in range(0, len(packet), bytes_per_beat)
+		)
 
 	async def produce() -> None:
 		if using_coaxi:
 			for data in payloads:
 				await source.send_frame(data)
 		else:
-			for data in encoded:
+			for data in payloads if implementation == "legacy-word" else encoded:
 				await tx.send(data)
 			await tx.wait()
 
@@ -84,12 +128,18 @@ async def stream_throughput(dut: HierarchyObject) -> None:
 		if using_coaxi:
 			for _ in range(frame_count):
 				packet = await sink.recv_frame(max_transfers=frame_size)
-				received.append(tuple(int(beat.data) for beat in packet))
-				assert packet[-1].last is True
+				if implementation == "deferred":
+					snapshots.append(packet)
+				else:
+					received.append(decode_coaxi(packet))
 		else:
 			for _ in range(frame_count):
 				packet = await rx.recv(compact=False)
-				received.append(unpack(f"<{frame_size}H", packet.tdata))
+				if implementation == "legacy-word":
+					assert len(packet.tdata) == frame_size
+					received.append(tuple(packet.tdata))
+				else:
+					received.append(decode_bytes(packet.tdata))
 
 	async def exchange() -> None:
 		producer = cocotb.start_soon(produce())
@@ -99,16 +149,21 @@ async def stream_throughput(dut: HierarchyObject) -> None:
 	start = perf_counter()
 	if profile is not None:
 		profile.enable()
-	await with_timeout(exchange(), (beats + 32) * 20, "ns")
+	await with_timeout(exchange(), (beats + 32) * 30, "ns")
 	if profile is not None:
 		profile.disable()
 	elapsed = perf_counter() - start
 	await Timer(1, unit="step")
 	await ReadOnly()
+	if implementation == "deferred":
+		received.extend(decode_coaxi(packet) for packet in snapshots)
 	assert received == payloads
 	assert int(dut.accepted.value) == int(dut.retired.value) == beats
-	cycles = int(dut.last_cycle.value) - int(dut.first_cycle.value) + 1
-	assert cycles == beats, f"{beats} transfers took {cycles} cycles"
+	first, last = int(dut.first_cycle.value), int(dut.last_cycle.value)
+	cycles = last - first + 1
+	# An input stall on cycle n causes an output bubble on cycle n + 1.
+	bubbles = (last - 1) // stall_period - (first - 2) // stall_period if stall_period else 0
+	assert cycles == beats + bubbles, f"{beats} transfers, {bubbles} expected stalls, {cycles} cycles"
 	if profile is not None:
 		profile.dump_stats(profile_path)
 	Path(os.environ["BENCH_RESULT"]).write_text(json.dumps({"seconds": elapsed, "cycles": cycles}), encoding="utf-8")
@@ -123,13 +178,24 @@ def _main() -> None:
 	parser.add_argument("--repeat", type=int, default=3)
 	parser.add_argument("--trust-inertial", choices=["0", "1"], nargs="+", default=["0", "1"])
 	parser.add_argument("--reset-pin", action="store_true")
-	parser.add_argument("--implementation", choices=["coaxi", "legacy"], nargs="+", default=["coaxi", "legacy"])
+	parser.add_argument("--width", type=int, default=16, help="payload width in bits")
+	parser.add_argument("--stall-period", type=int, default=0, help="DUT blocks input every N cycles (0 disables)")
+	parser.add_argument(
+		"--implementation",
+		choices=["coaxi", "legacy", "legacy-word", "deferred", "direct"],
+		nargs="+",
+		default=["coaxi", "legacy"],
+	)
 	parser.add_argument("--legacy-path", type=Path)
 	parser.add_argument("--baseline-path", type=Path, help="also measure an older checkout's src/ directory")
 	parser.add_argument("--profile", type=Path)
 	args = parser.parse_args()
 	if args.beats <= 0 or args.repeat <= 0 or any(size <= 0 or args.beats % size for size in args.frame_size):
 		parser.error("use positive counts and frame sizes that divide the beat count")
+	if args.width < 8 or args.width > 512 or args.width % 8:
+		parser.error("--width must be a multiple of eight in 8..512")
+	if args.stall_period < 0 or args.stall_period == 1:
+		parser.error("--stall-period must be zero or at least two")
 	implementations = list(dict.fromkeys(args.implementation))
 	if args.baseline_path:
 		if not (args.baseline_path / "coaxi" / "__init__.py").is_file():
@@ -151,11 +217,11 @@ def _main() -> None:
 			hdl_toplevel="stream_benchmark",
 			build_args=["--std=2008"],
 			build_dir=scratch,
-			log_file=scratch / "build.log",
 		)
 		for size in args.frame_size:
 			for trust in args.trust_inertial:
 				times: dict[str, list[float]] = {kind: [] for kind in implementations}
+				cycle_counts: dict[str, set[int]] = {kind: set() for kind in implementations}
 				for repeat in range(args.repeat):
 					offset = repeat % len(implementations)
 					kinds = implementations[offset:] + implementations[:offset]
@@ -168,6 +234,8 @@ def _main() -> None:
 							BENCH_BEATS=str(args.beats),
 							BENCH_FRAME_SIZE=str(size),
 							BENCH_RESET=str(int(args.reset_pin)),
+							BENCH_WIDTH=str(args.width),
+							BENCH_STALL_PERIOD=str(args.stall_period),
 							BENCH_RESULT=str(result),
 						)
 						if args.profile:
@@ -179,6 +247,7 @@ def _main() -> None:
 								hdl_toplevel="stream_benchmark",
 								test_module="bench_stream",
 								test_dir=scratch,
+								parameters={"data_width": args.width, "stall_period": args.stall_period},
 								results_xml=str(scratch / "results.xml"),
 								log_file=scratch / "run.log",
 							)
@@ -192,11 +261,14 @@ def _main() -> None:
 							or not result.is_file()
 						):
 							raise RuntimeError((scratch / "run.log").read_text(encoding="utf-8"))
-						times[kind].append(json.loads(result.read_text(encoding="utf-8"))["seconds"])
+						measurement = json.loads(result.read_text(encoding="utf-8"))
+						times[kind].append(measurement["seconds"])
+						cycle_counts[kind].add(measurement["cycles"])
 				for kind, samples in times.items():
+					cycles = "/".join(map(str, sorted(cycle_counts[kind])))
 					print(
-						f"{kind:6} frame={size:4} trust={trust} reset={int(args.reset_pin)} "
-						f"{args.beats} beats / {args.beats} cycles: {median(samples):.3f} s median "
+						f"{kind:8} width={args.width:3} frame={size:4} trust={trust} reset={int(args.reset_pin)} "
+						f"stall={args.stall_period} {args.beats} beats / {cycles} cycles: {median(samples):.3f} s median "
 						f"({args.beats / median(samples):.0f} beats/s), samples: {', '.join(f'{s:.3f}' for s in samples)}",
 						flush=True,
 					)

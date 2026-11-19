@@ -297,10 +297,9 @@ class _Endpoint[T]:
 		if current_gpi_trigger() is not edge or completed_at != get_sim_time(unit="step"):
 			await self._wait_edge(edge, self._active)
 
-	def _finish_beat(self) -> None:
-		self._completed_at = int(get_sim_time(unit="step"))
-
-	def _finish(self) -> None:
+	def _finish(self, *, on_falling_edge: bool = True) -> None:
+		if on_falling_edge:
+			self._completed_at = int(get_sim_time(unit="step"))
 		self._active = None
 
 	def _check(self, token: object) -> None:
@@ -667,7 +666,7 @@ class AxiStreamSource[T = PayloadValue | None](_Endpoint[T]):
 			if sidebands is None:
 				metadata = self._sidebands.prepare(None)
 				for index in range(count):
-					await self._send_one(token, data[index], index == count - 1, metadata)
+					await self._send_one(token, data[index], index == count - 1, metadata, reuse_edge=index > 0)
 			else:
 				identity = None
 				for index in range(count):
@@ -679,15 +678,18 @@ class AxiStreamSource[T = PayloadValue | None](_Endpoint[T]):
 							f"entry {index} (zero-based) changes identity from {identity} to {key}"
 						)
 					identity = key
-					await self._send_one(token, data[index], index == count - 1, metadata)
+					await self._send_one(token, data[index], index == count - 1, metadata, reuse_edge=index > 0)
 			_log.debug("sent frame on %s, transfers=%s", self._name, count)
 			self._finish()
 		except BaseException:
 			self._abort(token)
 			raise
 
-	async def _send_one(self, token: object, data: T, last: bool | None, metadata: _Values) -> None:
-		await self._start_edge()
+	async def _send_one(
+		self, token: object, data: T, last: bool | None, metadata: _Values, *, reuse_edge: bool = False
+	) -> None:
+		if not reuse_edge:
+			await self._start_edge()
 		self._check(token)
 		while self._paused:
 			await self._wait_edge(FallingEdge(self._clock), token)
@@ -709,7 +711,6 @@ class AxiStreamSource[T = PayloadValue | None](_Endpoint[T]):
 		self._bus.valid.set(0)
 		if self._bus.last is not None:
 			self._bus.last.set(0)
-		self._finish_beat()
 
 
 class AxiStreamSink[T = PayloadValue | None](_Endpoint[T]):
@@ -901,7 +902,7 @@ class AxiStreamSink[T = PayloadValue | None](_Endpoint[T]):
 					if prefix is not None:
 						self._release(len(prefix))
 			self._release(1)
-			self._finish()
+			self._finish(on_falling_edge=self._bus.ready is not None)
 			return transfer
 		except BaseException:
 			self._abort(token)
@@ -950,8 +951,11 @@ class AxiStreamSink[T = PayloadValue | None](_Endpoint[T]):
 				raise ValueError(
 					f"retained packet has already reached max_transfers={max_transfers}; initialise() required"
 				)
+			reuse_edge = False
 			while True:
-				transfer = await self._recv_one(token)
+				transfer = await self._recv_one(token, reuse_edge=reuse_edge)
+				# With ready, the next beat starts on this beat's cleanup edge.
+				reuse_edge = True
 				self._check(token)
 				try:
 					key = _identity(transfer.id, transfer.dest)
@@ -965,7 +969,7 @@ class AxiStreamSink[T = PayloadValue | None](_Endpoint[T]):
 					del self._packets[key]
 					_log.debug("received packet on %s, identity=%s, transfers=%s", self._name, key, len(packet))
 					self._release(len(packet))
-					self._finish()
+					self._finish(on_falling_edge=self._bus.ready is not None)
 					return packet
 				if max_transfers is not None and len(packet) >= max_transfers:
 					raise ValueError(f"packet did not end within max_transfers={max_transfers}; initialise() required")
@@ -994,14 +998,15 @@ class AxiStreamSink[T = PayloadValue | None](_Endpoint[T]):
 			metadata.get("dest"),
 		)
 
-	async def _recv_one(self, token: object) -> AxiStreamTransfer[T]:
+	async def _recv_one(self, token: object, *, reuse_edge: bool = False) -> AxiStreamTransfer[T]:
 		if self._bus.ready is None:
 			while True:
 				self._check(token)
 				if self._queue:
 					return self._queue.popleft()
 				await self._changed.wait()
-		await self._start_edge()
+		if not reuse_edge:
+			await self._start_edge()
 		ready = None
 		while True:
 			self._check(token)
@@ -1018,5 +1023,4 @@ class AxiStreamSink[T = PayloadValue | None](_Endpoint[T]):
 		await self._wait_edge(FallingEdge(self._clock), token)
 		self._check(token)
 		self._bus.ready.set(0)
-		self._finish_beat()
 		return transfer

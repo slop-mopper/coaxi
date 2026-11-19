@@ -6,17 +6,19 @@ library ieee;
 use ieee.std_logic_1164.all;
 
 entity stream_benchmark is
+	generic (data_width : positive := 16; stall_period : natural := 0);
 end entity;
 
 architecture test of stream_benchmark is
 	signal clock, reset : std_logic := '0';
-	signal s_tdata, m_tdata : std_logic_vector(15 downto 0) := (others => '0');
+	signal s_tdata, m_tdata : std_logic_vector(data_width - 1 downto 0) := (others => '0');
 	signal s_tvalid, s_tready, s_tlast : std_logic := '0';
 	signal m_tvalid, m_tready, m_tlast : std_logic := '0';
 	signal occupied : std_logic := '0';
 	signal cycles, accepted, retired, first_cycle, last_cycle : natural := 0;
 begin
-	s_tready <= not occupied or m_tready;
+	s_tready <= '0' when stall_period /= 0 and cycles mod stall_period = 0
+		else not occupied or m_tready;
 	m_tvalid <= occupied;
 
 	process (clock)
@@ -36,6 +38,8 @@ begin
 						m_tlast <= s_tlast;
 						accepted <= accepted + 1;
 					end if;
+				elsif m_tready = '1' then
+					occupied <= '0';
 				end if;
 				if m_tvalid = '1' and m_tready = '1' then
 					if retired = 0 then

@@ -29,24 +29,38 @@ and runs the packaged vector/record example under NVC in both write modes.
 
 ## Stream throughput
 
-`tests/bench_stream.py` measures wall-clock time for a 16-bit registered
-loopback. It checks payload order, frame lengths, and one completed beat per
-clock. Timing includes the transfer calls and conversion to Python integers,
-but excludes setup, simulator startup, and final result checks.
+`tests/bench_stream.py` measures wall-clock time for a registered loopback.
+It checks payload order, frame lengths, and the number of cycles needed to
+complete the transfers. The default width is 16 bits, with one beat per
+clock. `--width` selects a byte-aligned width, and `--stall-period 4` blocks
+input every fourth cycle. Timing includes the transfer calls and, by default,
+conversion to Python integers. Setup, simulator startup, and final result
+checks run outside the timed region.
 
 ```console
 uv run --locked python tests/bench_stream.py --implementation coaxi --beats 32768
 uv pip install --target .venv/benchmark-deps --no-deps cocotbext-axi==0.1.28 cocotb-bus==0.3.0
 uv run --locked python tests/bench_stream.py --legacy-path .venv/benchmark-deps --beats 32768
-uv run --locked python tests/bench_stream.py --legacy-path .venv/benchmark-deps --beats 16384 --frame-size 256 --reset-pin
+uv run --locked python tests/bench_stream.py --legacy-path .venv/benchmark-deps \
+    --beats 16384 --frame-size 256 --width 128 --implementation coaxi legacy legacy-word
+uv run --locked python tests/bench_stream.py --legacy-path .venv/benchmark-deps \
+    --beats 16384 --frame-size 256 --reset-pin --stall-period 4
 ```
 
-The comparison uses the same DUT, simulator, clock, and cocotb version. It
-uses each library's frame API; `cocotbext-axi` queues packed byte frames, while
-coaxi sends payload values and returns a snapshot per beat. `--reset-pin`
-enables reset monitoring for both libraries and releases reset before timing.
-The comparison packages are for this benchmark only. Pass `--baseline-path`
+Each implementation uses the same DUT, NVC, clock, and cocotb version.
+`legacy` uses `cocotbext-axi` with its default byte lanes and packed byte
+frames. `legacy-word` sets its `byte_size` to the bus width and passes one
+integer per beat. Both use the same traffic and verify the same received
+words. Coaxi's frame API returns a snapshot per beat. The `deferred` mode
+keeps those snapshots but converts them to integers after timing. The
+`direct` mode uses a benchmark-only adapter that writes the generated,
+in-range integers directly to cocotb handles.
+
+`--reset-pin` binds reset for both libraries and releases it before timing;
+it measures the cost of monitoring an inactive pin. Pass `--baseline-path`
 with an older checkout's `src/` directory to include it in the same run.
+`--profile` writes a Python profile and requires one implementation, frame
+size, write mode, and repetition. Compare wall-clock times with profiling off.
 
 ## Reliability and coverage
 
