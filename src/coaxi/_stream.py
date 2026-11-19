@@ -901,7 +901,8 @@ class AxiStreamSink[T = PayloadValue | None](_Endpoint[T]):
 		token = self._begin()
 		try:
 			transfer = await self._recv_one(token)
-			self._check(token)
+			if self._bus.ready is None:
+				self._check(token)
 			if self._packets:
 				try:
 					key = _identity(transfer.id, transfer.dest)
@@ -962,12 +963,16 @@ class AxiStreamSink[T = PayloadValue | None](_Endpoint[T]):
 				raise ValueError(
 					f"retained packet has already reached max_transfers={max_transfers}; initialise() required"
 				)
+			has_ready = self._bus.ready is not None
 			reuse_edge = False
 			while True:
 				transfer = await self._recv_one(token, reuse_edge=reuse_edge)
-				# With ready, the next beat starts on this beat's cleanup edge.
-				reuse_edge = True
-				self._check(token)
+				if has_ready:
+					# _recv_one checked at cleanup. Packet bookkeeping and the
+					# next ready drive run on that edge without yielding.
+					reuse_edge = True
+				else:
+					self._check(token)
 				try:
 					key = _identity(transfer.id, transfer.dest)
 				except ValueError as exc:
@@ -980,7 +985,7 @@ class AxiStreamSink[T = PayloadValue | None](_Endpoint[T]):
 					del self._packets[key]
 					_log.debug("received packet on %s, identity=%s, transfers=%s", self._name, key, len(packet))
 					self._release(len(packet))
-					self._finish(on_falling_edge=self._bus.ready is not None)
+					self._finish(on_falling_edge=has_ready)
 					return packet
 				if max_transfers is not None and len(packet) >= max_transfers:
 					raise ValueError(f"packet did not end within max_transfers={max_transfers}; initialise() required")
@@ -1018,9 +1023,9 @@ class AxiStreamSink[T = PayloadValue | None](_Endpoint[T]):
 				await self._changed.wait()
 		if not reuse_edge:
 			await self._start_edge()
+			self._check(token)
 		ready = None
 		while True:
-			self._check(token)
 			allow = not self._paused
 			if ready != allow:
 				self._bus.ready.set(_HIGH if allow else _LOW)
@@ -1031,6 +1036,7 @@ class AxiStreamSink[T = PayloadValue | None](_Endpoint[T]):
 				transfer = self._read_transfer()
 				break
 			await self._wait_edge(self._falling_edge, token)
+			self._check(token)
 		await self._wait_edge(self._falling_edge, token)
 		self._check(token)
 		self._bus.ready.set(_LOW)

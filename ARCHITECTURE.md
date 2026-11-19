@@ -243,6 +243,12 @@ release gate follows Arm IHI 0051B §2.8.2 with configurable polarity and does n
 implement a synchroniser. A healthy pin-only interruption recovers automatically,
 including no-ready capture. New calls while unavailable reject rather than queue.
 
+During a ready-backed receive, the caller checks the live pin and operation
+token after each clock wait. Falling-edge cleanup and packet bookkeeping run
+without yielding, so the same check also covers the next beat's `ready` write
+within a frame. A receive without `ready` checks again before delivering a
+queued snapshot.
+
 A reset-bound endpoint reuses one task to wait for requested clock edges.
 The task wakes the foreground in the same simulator callback. The foreground
 checks its operation token and reads the reset pin before driving or sampling.

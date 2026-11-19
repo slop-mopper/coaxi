@@ -264,12 +264,14 @@ async def registered_full_rate(dut: HierarchyObject, framed: bool) -> None:
 
 
 @cocotb.test(timeout_time=5000, timeout_unit="ns")
-@cocotb.parametrize(after_acceptance=[False, True], pin_value=["1", "X"])
-async def stopped_clock_falling_wait(dut: HierarchyObject, after_acceptance: bool, pin_value: str) -> None:
+@cocotb.parametrize(after_acceptance=[False, True], pin_value=["1", "X"], framed=[False, True])
+async def stopped_clock_falling_wait(
+	dut: HierarchyObject, after_acceptance: bool, pin_value: str, framed: bool
+) -> None:
 	"""Interrupt either falling-edge wait with no further clock transitions."""
 	await _setup(dut)
 	pin = dut.reset_lane
-	bus = AxiStreamBus.bind(dut, prefix="plain", t_prefix=False)
+	bus = AxiStreamBus.bind(dut, prefix="plain", t_prefix=False, last="end_of_packet" if framed else False)
 	source = AxiStreamSource(bus, "beat_clock", reset=pin, reset_active_high=True)
 	sink = AxiStreamSink(bus, "beat_clock", reset=pin, reset_active_high=True)
 	await source.initialise()
@@ -278,8 +280,8 @@ async def stopped_clock_falling_wait(dut: HierarchyObject, after_acceptance: boo
 		await _edge(dut, level)
 	await source.wait_available()
 	await sink.wait_available()
-	sending = cocotb.start_soon(_result(source.send(42)))
-	receiving = cocotb.start_soon(_result(sink.recv()))
+	sending = cocotb.start_soon(_result(source.send_frame([42, 43]) if framed else source.send(42)))
+	receiving = cocotb.start_soon(_result(sink.recv_frame() if framed else sink.recv()))
 	if after_acceptance:
 		for level in (True, False, True):
 			await _edge(dut, level)
