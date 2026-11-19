@@ -302,13 +302,18 @@ async def sink_source_gaps(dut: HierarchyObject, reset_pin: bool) -> None:
 
 
 @cocotb.test(timeout_time=10000, timeout_unit="ns")
-async def reuse_phase_guards(dut: HierarchyObject) -> None:
+@cocotb.parametrize(pin_bound=[False, True])
+async def reuse_phase_guards(dut: HierarchyObject, pin_bound: bool) -> None:
 	"""Never drive using a cached edge after leaving its simulator callback."""
 	await _setup(dut)
 	bus = AxiStreamBus.bind(dut, prefix="plain", t_prefix=False)
-	source, sink = AxiStreamSource(bus, "beat_clock"), AxiStreamSink(bus, "beat_clock")
+	pin = dut.reset_lane if pin_bound else None
+	source = AxiStreamSource(bus, "beat_clock", reset=pin, reset_active_high=True)
+	sink = AxiStreamSink(bus, "beat_clock", reset=pin, reset_active_high=True)
 	await source.initialise()
 	await sink.initialise()
+	await source.wait_available()
+	await sink.wait_available()
 	dut.plain_ready.value = 1
 	for phase in ("read_only", "read_write", "delay", "later_falling"):
 		await source.send(1)
@@ -328,6 +333,7 @@ async def reuse_phase_guards(dut: HierarchyObject) -> None:
 	dut.plain_valid.value = 1
 	# Reset must not grant permission to reuse its clearing edge.
 	await sink.initialise()
+	await sink.wait_available()
 	reset_at = get_sim_time(unit="ns")
 	await sink.recv()
 	assert get_sim_time(unit="ns") - reset_at == 20
@@ -344,6 +350,8 @@ async def reuse_phase_guards(dut: HierarchyObject) -> None:
 			await Timer(1, unit="ns")
 		await sink.recv()
 		assert get_sim_time(unit="ns") - previous == (30 if phase == "later_falling" else 20)
+	await source.close()
+	await sink.close()
 
 
 @cocotb.test(timeout_time=10000, timeout_unit="ns")

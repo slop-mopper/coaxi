@@ -57,7 +57,9 @@ _MUTATIONS = [
 	_Mutation(
 		"leave_collector_running",
 		"_stream.py",
+		"\t\t# its generation guard return rather than trying to cancel this task.\n"
 		"\t\tif task is not None and task is not current_task():\n\t\t\ttask.cancel()",
+		"\t\t# its generation guard return rather than trying to cancel this task.\n"
 		"\t\tif task is not None and task is not current_task():\n\t\t\tpass",
 		"lifecycle_accounting",
 		"background task survived close",

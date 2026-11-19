@@ -27,6 +27,27 @@ and NVC 1.21.1 on Linux.
 contents, installs only declared runtime dependencies in a fresh environment,
 and runs the packaged vector/record example under NVC in both write modes.
 
+## Stream throughput
+
+`tests/bench_stream.py` measures wall-clock time for a 16-bit registered
+loopback. It checks payload order, frame lengths, and one completed beat per
+clock. Timing includes the transfer calls and conversion to Python integers,
+but excludes setup, simulator startup, and final result checks.
+
+```console
+uv run --locked python tests/bench_stream.py --implementation coaxi --beats 32768
+uv pip install --target .venv/benchmark-deps --no-deps cocotbext-axi==0.1.28 cocotb-bus==0.3.0
+uv run --locked python tests/bench_stream.py --legacy-path .venv/benchmark-deps --beats 32768
+uv run --locked python tests/bench_stream.py --legacy-path .venv/benchmark-deps --beats 16384 --frame-size 256 --reset-pin
+```
+
+The comparison uses the same DUT, simulator, clock, and cocotb version. It
+uses each library's frame API; `cocotbext-axi` queues packed byte frames, while
+coaxi sends payload values and returns a snapshot per beat. `--reset-pin`
+enables reset monitoring for both libraries and releases reset before timing.
+The comparison packages are for this benchmark only. Pass `--baseline-path`
+with an older checkout's `src/` directory to include it in the same run.
+
 ## Reliability and coverage
 
 ```console

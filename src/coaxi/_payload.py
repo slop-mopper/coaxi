@@ -85,22 +85,29 @@ class HandlePayload:
 			if not isinstance(value, Mapping) or value.keys() != self._children.keys():
 				raise ValueError(f"{self._handle._path}: expected exactly these fields: {list(self._children)}")
 			return [write for name, child in self._children.items() for write in child._prepare(value[name])]
+		handle = self._handle
+		if not isinstance(handle, (LogicObject, LogicArrayObject)):
+			raise TypeError("unsupported payload handle")
+		return [(handle, self._leaf_value(handle, value))]
+
+	@staticmethod
+	def _leaf_value(handle: LogicObject | LogicArrayObject, value: PayloadValue) -> Logic | LogicArray:
+		if value is None:
+			raise TypeError(f"{handle._path}: None requires an absent data signal")
 		if isinstance(value, Mapping):
-			raise TypeError(f"{self._handle._path}: expected a logic value, not a field mapping")
+			raise TypeError(f"{handle._path}: expected a logic value, not a field mapping")
 		if isinstance(value, int) and value < 0:
-			raise ValueError(f"{self._handle._path}: integer payloads must be unsigned; use LogicArray.from_signed")
+			raise ValueError(f"{handle._path}: integer payloads must be unsigned; use LogicArray.from_signed")
 		try:
-			if isinstance(self._handle, LogicObject):
+			if isinstance(handle, LogicObject):
 				if isinstance(value, LogicArray):
 					value = str(value)
-				return [(self._handle, Logic(value))]
-			if isinstance(self._handle, LogicArrayObject):
-				if isinstance(value, (Logic, LogicArray)):
-					value = str(value)
-				return [(self._handle, LogicArray(value, self._handle.range))]
+				return Logic(value)
+			if isinstance(value, (Logic, LogicArray)):
+				value = str(value)
+			return LogicArray(value, handle.range)
 		except (ValueError, TypeError, OverflowError) as exc:
-			raise type(exc)(f"{self._handle._path}: {exc}") from exc
-		raise TypeError("unsupported payload handle")
+			raise type(exc)(f"{handle._path}: {exc}") from exc
 
 	def drive(self, value: PayloadValue) -> None:
 		"""Validate the entire value, then drive it without yielding.
@@ -109,8 +116,12 @@ class HandlePayload:
 		non-negative and fit the HDL width. Strings retain deliberate X/U/etc.
 		Validation errors leave all leaves unchanged.
 		"""
-		for handle, leaf in self._prepare(value):
-			handle.set(leaf)
+		handle = self._handle
+		if isinstance(handle, (LogicObject, LogicArrayObject)):
+			handle.set(self._leaf_value(handle, value))
+		else:
+			for handle, leaf in self._prepare(value):
+				handle.set(leaf)
 
 	def clear(self) -> None:
 		"""Drive zero to all leaves, clearing any previously driven meta-values."""

@@ -15,7 +15,7 @@ from cocotb.clock import Clock
 from cocotb.types import LogicArray
 from cocotb.handle import HierarchyObject, LogicObject, LogicArrayObject
 from cocotb.simtime import get_sim_time
-from cocotb.triggers import Event, Timer, ReadOnly, RisingEdge, FallingEdge, NullTrigger
+from cocotb.triggers import Event, Timer, ReadOnly, RisingEdge, FallingEdge, NullTrigger, current_gpi_trigger
 
 from coaxi import (
 	AxiStreamBus,
@@ -186,8 +186,9 @@ async def stopped_clock_assertion(dut: HierarchyObject, high: bool) -> None:
 
 
 @cocotb.test(timeout_time=20000, timeout_unit="ns")
-async def registered_full_rate(dut: HierarchyObject) -> None:
-	"""Pin-aware edge races must still sample before registered HDL updates, every cycle."""
+@cocotb.parametrize(framed=[False, True])
+async def registered_full_rate(dut: HierarchyObject, framed: bool) -> None:
+	"""Sample before registered HDL updates and complete on the falling edge."""
 	await _setup(dut)
 	cocotb.start_soon(Clock(dut.beat_clock, 10, unit="ns").start(start_high=False))
 	source = AxiStreamSource(
@@ -218,16 +219,31 @@ async def registered_full_rate(dut: HierarchyObject) -> None:
 			if int(dut.m_valid.value) and int(dut.m_ready.value):
 				outputs.append(int(get_sim_time(unit="ns")))
 
+	falling = FallingEdge(dut.beat_clock)
+
 	async def transmit() -> None:
-		for index in range(0, 128, 8):
-			await source.send_frame(values[index : index + 8])
+		if framed:
+			for index in range(0, 128, 8):
+				await source.send_frame(values[index : index + 8])
+				assert current_gpi_trigger() is falling
+		else:
+			for value in values:
+				await source.send(value, last=True)
+				assert current_gpi_trigger() is falling
 
 	async def receive() -> list[int]:
 		result: list[int] = []
-		for _ in range(16):
-			frame = await sink.recv_frame()
-			assert [transfer.last for transfer in frame] == [False] * 7 + [True]
-			result.extend(_number(transfer) for transfer in frame)
+		if framed:
+			for _ in range(16):
+				frame = await sink.recv_frame()
+				assert current_gpi_trigger() is falling
+				assert [transfer.last for transfer in frame] == [False] * 7 + [True]
+				result.extend(_number(transfer) for transfer in frame)
+		else:
+			for _ in values:
+				transfer = await sink.recv()
+				assert current_gpi_trigger() is falling and transfer.last is True
+				result.append(_number(transfer))
 		return result
 
 	monitor_task = cocotb.start_soon(monitor())
@@ -239,8 +255,50 @@ async def registered_full_rate(dut: HierarchyObject) -> None:
 	assert all(b - a == 10 for a, b in pairwise(inputs)), inputs
 	assert all(b - a == 10 for a, b in pairwise(outputs)), outputs
 	assert int(dut.accepted.value) == int(dut.retired.value) == 128
+	source_waiter, sink_waiter = source._edge_waiter, sink._edge_waiter
+	assert source_waiter is not None and sink_waiter is not None
 	await source.close()
 	await sink.close()
+	assert source._edge_waiter is sink._edge_waiter is None
+	assert source_waiter._task.done() and sink_waiter._task.done()
+
+
+@cocotb.test(timeout_time=5000, timeout_unit="ns")
+@cocotb.parametrize(after_acceptance=[False, True], pin_value=["1", "X"])
+async def stopped_clock_falling_wait(dut: HierarchyObject, after_acceptance: bool, pin_value: str) -> None:
+	"""Interrupt either falling-edge wait with no further clock transitions."""
+	await _setup(dut)
+	pin = dut.reset_lane
+	bus = AxiStreamBus.bind(dut, prefix="plain", t_prefix=False)
+	source = AxiStreamSource(bus, "beat_clock", reset=pin, reset_active_high=True)
+	sink = AxiStreamSink(bus, "beat_clock", reset=pin, reset_active_high=True)
+	await source.initialise()
+	await sink.initialise()
+	for level in (True, False, True, False):
+		await _edge(dut, level)
+	await source.wait_available()
+	await sink.wait_available()
+	sending = cocotb.start_soon(_result(source.send(42)))
+	receiving = cocotb.start_soon(_result(sink.recv()))
+	if after_acceptance:
+		for level in (True, False, True):
+			await _edge(dut, level)
+		assert int(dut.plain_valid.value) == int(dut.plain_ready.value) == 1
+		assert int(dut.plain_data.value) == 42
+	else:
+		await Timer(1, unit="ns")
+		assert int(dut.plain_valid.value) == int(dut.plain_ready.value) == 0
+	assert not sending.done() and not receiving.done()
+	source_waiter, sink_waiter = source._edge_waiter, sink._edge_waiter
+	assert source_waiter is not None and sink_waiter is not None
+	pin.value = pin_value
+	await Timer(1, unit="ns")
+	expected = TransferReset if pin_value == "1" else ProtocolValueError
+	assert sending.done() and receiving.done()
+	assert isinstance(await sending, expected) and isinstance(await receiving, expected)
+	assert int(dut.plain_valid.value) == int(dut.plain_ready.value) == 0
+	assert source._edge_waiter is sink._edge_waiter is None
+	assert source_waiter._task.done() and sink_waiter._task.done()
 
 
 @cocotb.test(timeout_time=10000, timeout_unit="ns")
@@ -518,9 +576,13 @@ async def prior_cancellation_and_clear_fault(dut: HierarchyObject) -> None:
 	sending = cocotb.start_soon(source.send(8, last=True))
 	await FallingEdge(dut.beat_clock)
 	await Timer(1, unit="ns")
+	waiter = source._edge_waiter
+	assert waiter is not None
 	sending.cancel()
 	with pytest.raises(CancelledError):
 		await sending
+	await NullTrigger()
+	assert source._edge_waiter is None and waiter._task.done()
 	pin.value = 0
 	await Timer(1, unit="ns")
 	await _release(dut, False)

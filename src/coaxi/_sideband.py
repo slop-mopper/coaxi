@@ -45,6 +45,8 @@ type _Values = dict[str, Logic | LogicArray]
 
 
 def _identity(id: Logic | LogicArray | None, dest: Logic | LogicArray | None) -> tuple[int, int]:
+	if id is None and dest is None:
+		return (0, 0)
 	result = []
 	for role, value in (("id", id), ("dest", dest)):
 		if value is None:
@@ -66,6 +68,10 @@ class _SidebandAccess:
 		elif bus.keep is not None:
 			self._lanes = 1 if isinstance(bus.keep, LogicObject) else len(bus.keep)
 
+	@property
+	def bound(self) -> bool:
+		return bool(self._handles)
+
 	def _validate(self, values: Mapping[str, Logic | LogicArray]) -> None:
 		if self._lanes:
 			keep = str(values["keep"]) if "keep" in values else "1" * self._lanes
@@ -74,14 +80,14 @@ class _SidebandAccess:
 				raise ValueError("reserved byte qualifier combination: keep=0, strb=1")
 
 	def prepare(self, metadata: AxiStreamSidebands | None) -> _Values:
-		if metadata is None:
-			metadata = AxiStreamSidebands()
-		if not isinstance(metadata, AxiStreamSidebands):
+		if metadata is None and not self._handles:
+			return {}
+		if metadata is not None and not isinstance(metadata, AxiStreamSidebands):
 			raise TypeError("sidebands must be AxiStreamSidebands or None")
 		values: _Values = {}
 		for role in _ROLES:
 			handle = self._handles.get(role)
-			value = getattr(metadata, role)
+			value = None if metadata is None else getattr(metadata, role)
 			if handle is None:
 				if value is not None:
 					raise ValueError(f"{role} requires a bound {role} signal")

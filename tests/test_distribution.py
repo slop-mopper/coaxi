@@ -95,6 +95,8 @@ def check_distribution(dist: Path, tmp_path: Path) -> None:
 			"docs/index.md",
 			"RELEASING.md",
 			"tests/test_simulation.py",
+			"tests/bench_stream.py",
+			"tests/hdl/stream_benchmark.vhd",
 			"tests/test_typing.py",
 			"tests/test_values.py",
 			"tests/test_numeric.py",

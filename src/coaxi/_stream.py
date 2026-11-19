@@ -6,7 +6,7 @@
 
 import logging
 from typing import cast, overload
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from collections import deque
 from itertools import cycle
 from collections.abc import Iterable, Iterator, Sequence
@@ -17,7 +17,6 @@ from cocotb.types import Logic, LogicArray
 from cocotb.simtime import get_sim_time
 from cocotb.triggers import (
 	Event,
-	First,
 	Timer,
 	Trigger,
 	ReadOnly,
@@ -85,12 +84,46 @@ def _pause_bit(value: bool | int) -> bool:
 	raise ValueError(f"pause pattern values must be bool, 0, or 1; got {value!r}")
 
 
-@dataclass
+@dataclass(slots=True)
 class _Operation:
-	interrupted: Event = field(default_factory=Event)
-	error: Exception = field(
-		default_factory=lambda: TransferReset("endpoint interrupted work; accepted traffic is not undone")
-	)
+	error: Exception | None = None
+
+
+class _EdgeWaiter:
+	"""Relay one foreground clock wait at a time without spawning tasks per edge."""
+
+	def __init__(self) -> None:
+		self._request = Event()
+		self._done = Event()
+		self._edge: Trigger | None = None
+		self.error: Exception | None = None
+		self._task = cocotb.start_soon(self._run())
+
+	async def wait(self, edge: Trigger) -> None:
+		self._edge = edge
+		self._request.set()
+		await self._done.wait()
+		self._done.clear()
+
+	async def _run(self) -> None:
+		while True:
+			await self._request.wait()
+			self._request.clear()
+			edge, self._edge = self._edge, None
+			assert edge is not None
+			try:
+				await edge
+			except Exception as exc:
+				self.error = exc
+				self._done.set()
+				return
+			# The foreground resumes in the same GPI callback, before HDL
+			# resumes. The waiter does no sampling or signal writes itself.
+			self._done.set()
+
+	def stop(self) -> None:
+		self._task.cancel()
+		self._done.set()
 
 
 class _Endpoint[T]:
@@ -121,9 +154,11 @@ class _Endpoint[T]:
 			self._payload = cast(Payload[T], default_payload)
 		self._name = bus.valid._path
 		self._sidebands = _SidebandAccess(bus)
+		self._has_sidebands = self._sidebands.bound
 		self._initialised = False
 		self._resetting = False
 		self._active: _Operation | None = None
+		self._edge_waiter: _EdgeWaiter | None = None
 		self._completed_at: int | None = None
 		self._needs_initialise = True
 		self._fault: Exception | None = None
@@ -235,21 +270,31 @@ class _Endpoint[T]:
 		return token
 
 	async def _wait_edge(self, edge: Trigger, token: object | None) -> None:
-		if self._reset is None or not isinstance(token, _Operation):
+		if self._reset is None:
 			await edge
-		else:
-			# First's waiters all run in this GPI callback, before HDL resumes.
-			# Never wait for ReadOnly before taking the handshake snapshot.
-			await First(edge, token.interrupted.wait())
+			return
+		waiter = self._edge_waiter
+		if waiter is None:
+			waiter = self._edge_waiter = _EdgeWaiter()
+		await waiter.wait(edge)
+		# The caller checks the token and pin before touching the interface.
+		# If the wait itself failed, check for invalidation first.
+		if waiter.error is not None:
 			self._check(token)
+			raise waiter.error
+
+	def _stop_edge_waiter(self) -> None:
+		waiter, self._edge_waiter = self._edge_waiter, None
+		if waiter is not None:
+			waiter.stop()
 
 	async def _start_edge(self) -> None:
 		# Only a successful preceding transfer can share its cleanup edge. Time
 		# alone is insufficient: ReadOnly/ReadWrite can occur in the same step.
 		edge = FallingEdge(self._clock)
-		same_time = self._completed_at == int(get_sim_time(unit="step"))
+		completed_at = self._completed_at
 		self._completed_at = None
-		if not same_time or current_gpi_trigger() is not edge:
+		if current_gpi_trigger() is not edge or completed_at != get_sim_time(unit="step"):
 			await self._wait_edge(edge, self._active)
 
 	def _finish_beat(self) -> None:
@@ -261,7 +306,7 @@ class _Endpoint[T]:
 	def _check(self, token: object) -> None:
 		self._observe_reset()
 		if self._active is not token:
-			if isinstance(token, _Operation):
+			if isinstance(token, _Operation) and token.error is not None:
 				raise token.error
 			raise TransferReset("endpoint interrupted work; accepted traffic is not undone")
 		if self._fault is not None:
@@ -271,6 +316,7 @@ class _Endpoint[T]:
 		if self._active is token:
 			self._stop_pause()
 			self._active = None
+			self._stop_edge_waiter()
 			self._initialised = False
 			self._needs_initialise = True
 			self._completed_at = None
@@ -283,10 +329,9 @@ class _Endpoint[T]:
 		self._stop_pause()
 		self._initialised = False
 		if self._active is not None:
-			if self._fault is not None:
-				self._active.error = self._fault
-			self._active.interrupted.set()
+			self._active.error = self._fault
 		self._active = None
+		self._stop_edge_waiter()
 		self._completed_at = None
 		self._signal_state()
 
@@ -619,17 +664,22 @@ class AxiStreamSource[T = PayloadValue | None](_Endpoint[T]):
 				raise ValueError("frame sidebands must have one entry per payload")
 		token = self._begin()
 		try:
-			identity = None
-			for index in range(count):
-				metadata = self._sidebands.prepare(None if sidebands is None else sidebands[index])
-				key = _identity(metadata.get("id"), metadata.get("dest"))
-				if identity is not None and key != identity:
-					raise ValueError(
-						f"send_frame requires a constant effective (id, dest); "
-						f"entry {index} (zero-based) changes identity from {identity} to {key}"
-					)
-				identity = key
-				await self._send_one(token, data[index], index == count - 1, metadata)
+			if sidebands is None:
+				metadata = self._sidebands.prepare(None)
+				for index in range(count):
+					await self._send_one(token, data[index], index == count - 1, metadata)
+			else:
+				identity = None
+				for index in range(count):
+					metadata = self._sidebands.prepare(sidebands[index])
+					key = _identity(metadata.get("id"), metadata.get("dest"))
+					if identity is not None and key != identity:
+						raise ValueError(
+							f"send_frame requires a constant effective (id, dest); "
+							f"entry {index} (zero-based) changes identity from {identity} to {key}"
+						)
+					identity = key
+					await self._send_one(token, data[index], index == count - 1, metadata)
 			_log.debug("sent frame on %s, transfers=%s", self._name, count)
 			self._finish()
 		except BaseException:
@@ -643,7 +693,8 @@ class AxiStreamSource[T = PayloadValue | None](_Endpoint[T]):
 			await self._wait_edge(FallingEdge(self._clock), token)
 			self._check(token)
 		self._payload.drive(data)
-		self._sidebands.drive(metadata)
+		if metadata:
+			self._sidebands.drive(metadata)
 		if self._bus.last is not None:
 			self._bus.last.set(int(bool(last)))
 		self._bus.valid.set(1)
@@ -839,13 +890,16 @@ class AxiStreamSink[T = PayloadValue | None](_Endpoint[T]):
 		try:
 			transfer = await self._recv_one(token)
 			self._check(token)
-			try:
-				key = _identity(transfer.id, transfer.dest)
-			except ValueError:
-				self._release(sum(len(packet) for packet in self._packets.values()))
-				self._packets.clear()
-			else:
-				self._release(len(self._packets.pop(key, [])))
+			if self._packets:
+				try:
+					key = _identity(transfer.id, transfer.dest)
+				except ValueError:
+					self._release(sum(len(packet) for packet in self._packets.values()))
+					self._packets.clear()
+				else:
+					prefix = self._packets.pop(key, None)
+					if prefix is not None:
+						self._release(len(prefix))
 			self._release(1)
 			self._finish()
 			return transfer
@@ -903,7 +957,9 @@ class AxiStreamSink[T = PayloadValue | None](_Endpoint[T]):
 					key = _identity(transfer.id, transfer.dest)
 				except ValueError as exc:
 					raise ProtocolValueError(str(exc)) from exc
-				packet = self._packets.setdefault(key, [])
+				packet = self._packets.get(key)
+				if packet is None:
+					packet = self._packets[key] = []
 				packet.append(transfer)
 				if transfer.last:
 					del self._packets[key]
@@ -920,6 +976,9 @@ class AxiStreamSink[T = PayloadValue | None](_Endpoint[T]):
 	def _read_transfer(self) -> AxiStreamTransfer[T]:
 		data = self._payload.read()
 		last = None if self._bus.last is None else _bit(self._bus.last, "last")
+		if not self._has_sidebands:
+			_log.debug("received transfer on %s, last=%s", self._name, last)
+			return AxiStreamTransfer(data, last)
 		try:
 			metadata = self._sidebands.read()
 		except ValueError as exc:

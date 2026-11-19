@@ -235,11 +235,13 @@ release gate follows Arm IHI 0051B §2.8.2 with configurable polarity and does n
 implement a synchroniser. A healthy pin-only interruption recovers automatically,
 including no-ready capture. New calls while unavailable reject rather than queue.
 
-Per-operation tokens carry an interruption event and error. Pin-aware waits
-race the clock edge against that event, then check ownership and synchronously
-inspect the pin before driving or sampling. This wakes stalled operations even
-with a stopped clock. No-pin edge waits retain their direct trigger path.
-Pin-aware registered-DUT regressions verify pre-update samples and full rate.
+A reset-bound endpoint reuses one task to wait for requested clock edges.
+The task wakes the foreground in the same simulator callback. The foreground
+checks its operation token and reads the reset pin before driving or sampling.
+Invalidation detaches and cancels the task and wakes the foreground even if
+the clock has stopped. The task waits for requests without subscribing to the
+clock while idle. Endpoints without reset pins await clock edges directly.
+Registered-DUT tests check full rate and rising-edge sampling with pin monitoring.
 
 Manual-recovery state is separate from pin eligibility: earlier cancellation,
 foreground errors, overflow and capture faults cannot be acknowledged by a pin
